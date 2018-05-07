@@ -22,6 +22,20 @@ THE SOFTWARE.
 
 #include "kernels.h"
 
+struct SliceLayerLocalData {
+    NeuralNetworkCommonHandle * handle;
+    cl_mem input_mem;
+    cl_mem output_mem[8];
+    vx_size batch_size;
+    vx_size num_outputs;
+    vx_bool aliased;
+    vx_size in_offsets[8];
+    vx_size memsizeInBytes;
+    vx_size local_w, global_w;
+    cl_kernel concat_kernel;
+};
+
+#if 1
 void slice_codegen_batchsz1(std::string& opencl_code, vx_size work_items, vx_size input_dims[4], int num_outputs, vx_size op_size_per_batch[8])
 {
     vx_size op_buffer_offset[8];
@@ -300,6 +314,82 @@ vx_status publishSliceLayer(vx_context context)
 
     return VX_SUCCESS;
 }
+#else
+static vx_status VX_CALLBACK processSliceLayer(vx_node node, const vx_reference * parameters, vx_uint32 num)
+{
+    ConcatLayerLocalData * data= NULL;
+    ERROR_CHECK_STATUS(vxQueryNode(node, VX_NODE_LOCAL_DATA_PTR, &data, sizeof(data)));
+
+    if (data->aliased == vx_false_e) {
+        ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[0], VX_TENSOR_BUFFER_OPENCL, &data->input_mem, sizeof(data->output_mem)));
+        ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[1], VX_TENSOR_BUFFER_OPENCL, &data->input_mem[0], sizeof(data->input_mem[0])));
+        ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[2], VX_TENSOR_BUFFER_OPENCL, &data->input_mem[1], sizeof(data->input_mem[1])));
+        ERROR_CHECK_STATUS(clSetKernelArg(data->concat_kernel, 0, sizeof(cl_mem), &data->output_mem));
+        ERROR_CHECK_STATUS(clSetKernelArg(data->concat_kernel, 1, sizeof(cl_mem), &data->input_mem[0]));
+        ERROR_CHECK_STATUS(clSetKernelArg(data->concat_kernel, 2, sizeof(cl_mem), &data->input_mem[1]));
+        for (int i = 2; i <  data->num_inputs; i++) {
+            ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[i], VX_TENSOR_BUFFER_OPENCL, &data->input_mem[i], sizeof(cl_mem)));
+            // copy/transpose input3 to output
+            ERROR_CHECK_STATUS(clSetKernelArg(data->copy_kernel, i+1, sizeof(cl_mem), &data->input_mem[i]));
+        }
+        ERROR_CHECK_STATUS(clEnqueueNDRangeKernel(data->handle->cmdq, data->concat_kernel, (data->num_inputs+1), nullptr, data->global_w, data->local_w, 0, nullptr, nullptr));
+
+#if ENABLE_DEBUG_PRINT_DIMS
+        std::cout << "Concat Layer: not using aliased buffer "<< std::endl;
+#endif
+
+    } else {
+#if ENABLE_DEBUG_PRINT_DIMS
+        std::cout << "Concat Layer: using aliased buffer "<< std::endl;
+#endif
+    }
+    ERROR_CHECK_STATUS(releaseGraphHandle(node, data->handle));
+    delete data;
+    return VX_SUCCESS;
+}
+
+static vx_status VX_CALLBACK uninitializeSliceLayer(vx_node node, const vx_reference *parameters, vx_uint32 num)
+{
+    SliceLayerLocalData * data = NULL;
+    ERROR_CHECK_STATUS(vxQueryNode(node, VX_NODE_LOCAL_DATA_PTR, &data, sizeof(data)));
+    if (data) {
+        if(data->slice_kernel) {
+            clReleaseKernel(data->slice_kernel);
+        }
+        ERROR_CHECK_STATUS(releaseGraphHandle(node, data->handle));
+        delete data;
+    }
+    return VX_SUCCESS;
+}
+
+//! \brief The kernel publisher.
+vx_status publishSliceLayer(vx_context context)
+{
+    vx_kernel kernel = vxAddUserKernel(context, "com.amd.nn_extension.slice_layer", VX_KERNEL_SLICE_LAYER_AMD, processSliceLayer, 9, validateSliceLayer, initializeSliceLayer, uninitializeSliceLayer);
+    ERROR_CHECK_OBJECT(kernel);
+
+    // enable OpenCL buffer access since the kernel_f callback uses OpenCL buffers instead of host accessible buffers
+    vx_bool enableBufferAccess = vx_true_e;
+    ERROR_CHECK_STATUS(vxSetKernelAttribute(kernel, VX_KERNEL_ATTRIBUTE_AMD_OPENCL_BUFFER_ACCESS_ENABLE, &enableBufferAccess, sizeof(enableBufferAccess)));
+
+    //set kernel parameters.
+    ERROR_CHECK_STATUS(vxAddParameterToKernel(kernel, 0, VX_INPUT, VX_TYPE_TENSOR, VX_PARAMETER_STATE_REQUIRED));
+    ERROR_CHECK_STATUS(vxAddParameterToKernel(kernel, 1, VX_OUTPUT, VX_TYPE_TENSOR, VX_PARAMETER_STATE_REQUIRED));
+    ERROR_CHECK_STATUS(vxAddParameterToKernel(kernel, 2, VX_OUTPUT, VX_TYPE_TENSOR, VX_PARAMETER_STATE_REQUIRED));
+    ERROR_CHECK_STATUS(vxAddParameterToKernel(kernel, 3, VX_OUTPUT, VX_TYPE_TENSOR, VX_PARAMETER_STATE_OPTIONAL));
+    ERROR_CHECK_STATUS(vxAddParameterToKernel(kernel, 4, VX_OUTPUT, VX_TYPE_TENSOR, VX_PARAMETER_STATE_OPTIONAL));
+    ERROR_CHECK_STATUS(vxAddParameterToKernel(kernel, 5, VX_OUTPUT, VX_TYPE_TENSOR, VX_PARAMETER_STATE_OPTIONAL));
+    ERROR_CHECK_STATUS(vxAddParameterToKernel(kernel, 6, VX_OUTPUT, VX_TYPE_TENSOR, VX_PARAMETER_STATE_OPTIONAL));
+    ERROR_CHECK_STATUS(vxAddParameterToKernel(kernel, 7, VX_OUTPUT, VX_TYPE_TENSOR, VX_PARAMETER_STATE_OPTIONAL));
+    ERROR_CHECK_STATUS(vxAddParameterToKernel(kernel, 8, VX_OUTPUT, VX_TYPE_TENSOR, VX_PARAMETER_STATE_OPTIONAL));
+
+    //finalize and release kernel object.
+    ERROR_CHECK_STATUS(vxFinalizeKernel(kernel));
+    ERROR_CHECK_STATUS(vxReleaseKernel(&kernel));
+
+    return VX_SUCCESS;
+
+#endif
 
 VX_API_ENTRY vx_node VX_API_CALL vxSliceLayer(vx_graph graph, vx_tensor input, vx_tensor output1, vx_tensor output2, vx_tensor output3, vx_tensor output4, vx_tensor output5, vx_tensor output6, vx_tensor output7, vx_tensor output8)
 {
