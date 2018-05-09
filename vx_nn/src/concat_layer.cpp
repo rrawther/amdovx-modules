@@ -35,7 +35,7 @@ struct ConcatLayerLocalData {
 
 static int firsttime = 1;
 
-#if 0
+#if 1
 void concat_codegen_batchsz1(std::string& opencl_code, vx_size work_items, vx_size output_dims[4], int num_inputs, vx_size ip_size_per_batch[8])
 {
     vx_size ip_buffer_offset[8];   // index 0 is unused
@@ -340,10 +340,18 @@ static vx_status VX_CALLBACK validateConcatLayer(vx_node node, const vx_referenc
     int i = 3;
     // alias input1 and input2 to output
     if (output_dims[3] == 1) {
-        vxAliasTensor((vx_tensor)parameters[1], alias_offset, (vx_tensor)parameters[0]);
-        alias_offset += input1_dims[1]*input1_dims[2]*input1_dims[3];
-        vxAliasTensor((vx_tensor)parameters[2], alias_offset, (vx_tensor)parameters[0]);
-        alias_offset += input2_dims[1]*input2_dims[2]*input2_dims[3];
+        vx_status status = vxAliasTensor((vx_tensor)parameters[0], alias_offset, (vx_tensor)parameters[1]);
+        if (status == VX_SUCCESS)
+        {
+            printf("Concat output at offset %d is aliased to input0\n", (int)alias_offset);
+        }
+        alias_offset += input1_dims[0]*input1_dims[1]*input1_dims[2];
+        status = vxAliasTensor((vx_tensor)parameters[0], alias_offset, (vx_tensor)parameters[2]);
+        if (status == VX_SUCCESS)
+        {
+            printf("Concat output at offset %d is aliased to input1\n", (int)alias_offset);
+        }
+        alias_offset += input2_dims[0]*input2_dims[1]*input2_dims[2];
     }
 
     while(parameters[i] && (i < 9)) {
@@ -359,8 +367,11 @@ static vx_status VX_CALLBACK validateConcatLayer(vx_node node, const vx_referenc
                     inputn_dims[0], inputn_dims[1], inputn_dims[2], inputn_dims[3]);
         num_channels += inputn_dims[2];
         if (output_dims[3] == 1) {
-      //      vxAliasTensor((vx_tensor)parameters[i], alias_offset, (vx_tensor)parameters[0]);
-            alias_offset += inputn_dims[1]*inputn_dims[2]*inputn_dims[3];
+            if (!vxAliasTensor((vx_tensor)parameters[0], alias_offset, (vx_tensor)parameters[i]))
+            {
+                printf("Concat output at offset %d is aliased to input %d\n", (int)alias_offset, i);
+            }
+            alias_offset += inputn_dims[0]*inputn_dims[1]*inputn_dims[2];
         }
         i++;
     }
@@ -469,15 +480,15 @@ static vx_status VX_CALLBACK initializeConcatLayer(vx_node node, const vx_refere
         i++;
     }
     // check to see if we can use aliased buffer
-    if (0/*data->batch_size == 1*/)
+    if (data->batch_size == 1)
     {
         // check if the input and output tensors are aliased
-        data->aliased = vxIsTensorAliased((vx_tensor)parameters[1], alias_offset[0], (vx_tensor)parameters[0]);
+        data->aliased = vxIsTensorAliased((vx_tensor)parameters[0], alias_offset[0], (vx_tensor)parameters[1]);
         std::cout<< "tensor aliased for 0" << data->aliased << std::endl;
-        data->aliased &= vxIsTensorAliased((vx_tensor)parameters[2], alias_offset[1], (vx_tensor)parameters[0]);
+        data->aliased &= vxIsTensorAliased((vx_tensor)parameters[0], alias_offset[1], (vx_tensor)parameters[2]);
         std::cout<< "tensor aliased for 1" << data->aliased << std::endl;
         for (int i = 2; i <  data->num_inputs; i++) {
-            data->aliased &= vxIsTensorAliased((vx_tensor)parameters[i+1], alias_offset[i], (vx_tensor)parameters[0]);
+            data->aliased &= vxIsTensorAliased((vx_tensor)parameters[0], alias_offset[i], (vx_tensor)parameters[i+1]);
             std::cout<< "tensor aliased for " << i <<" " << data->aliased << std::endl;
         }
     }
@@ -627,7 +638,6 @@ static vx_status VX_CALLBACK initializeConcatLayer(vx_node node, const vx_refere
     }
 
     ERROR_CHECK_STATUS(vxSetNodeAttribute(node, VX_NODE_LOCAL_DATA_PTR, &data, sizeof(data)));
-    printf("End Initialize kernel\n");
     return VX_SUCCESS;
 }
 
