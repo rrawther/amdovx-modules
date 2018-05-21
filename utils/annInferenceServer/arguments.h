@@ -11,7 +11,8 @@
 #include <stdio.h>
 #include <cl.h>
 
-#define MAX_DEVICE_USE_LIMIT     1   // number of parallel sessions allowed per device
+#define MAX_DEVICE_USE_LIMIT            1   // number of parallel sessions allowed per device
+#define MAX_DEVICE_USE_LIMIT_PRIORITY   2   // allow an extra use per device for priority
 
 class Arguments {
 public:
@@ -96,6 +97,21 @@ public:
     {
         localShadowRootDir = localShadowDir;
     }
+    void setPriorityMode(int pBatchSize)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        priorityMode = 1;
+        if (!pBatchSize)
+            priorityBatchSize = 1;
+        else
+            priorityBatchSize = pBatchSize;
+    }
+    int getPriorityMode() {
+        return priorityMode;
+    }
+    int getPriorityBatchSize() {
+        return priorityBatchSize;
+    }
 
     // device resources
     int lockGpuDevices(int GPUs, cl_device_id * device_id_);
@@ -113,6 +129,8 @@ private:
     int modelFileDownloadCounter;
     int port;
     int batchSize;
+    int priorityMode;
+    int priorityBatchSize;
     int maxPendingBatches;
     int numGPUs;
     int gpuIdList[MAX_NUM_GPU];

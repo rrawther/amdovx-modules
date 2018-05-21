@@ -10,7 +10,7 @@ Arguments::Arguments()
         : workFolder{ "~" }, modelFileDownloadCounter{ 0 },
           password{ "radeon" },
           port{ 28282 }, batchSize{ 32 }, maxPendingBatches{ 4 }, numGPUs{ 1 }, gpuIdList{ 0 },
-          maxGpuId{ 0 }, platform_id{ NULL }, num_devices{ 0 }, device_id{ NULL }, deviceUseCount{ 0 }
+          maxGpuId{ 0 }, platform_id{ NULL }, num_devices{ 0 }, device_id{ NULL }, deviceUseCount{ 0 }, priorityMode { 0 }, priorityBatchSize { 1 }
 {
     ////////
     /// \brief set default configuration file
@@ -331,7 +331,7 @@ int Arguments::lockGpuDevices(int GPUs, cl_device_id * device_id_)
         return -1;
     int deviceAvail = 0;
     for(int i = 0; i < num_devices; i++) {
-        if(deviceUseCount[i] < MAX_DEVICE_USE_LIMIT)
+        if((deviceUseCount[i] < MAX_DEVICE_USE_LIMIT) || (priorityMode && (deviceUseCount[i] < MAX_DEVICE_USE_LIMIT_PRIORITY)))
             deviceAvail++;
     }
     if(deviceAvail < GPUs)

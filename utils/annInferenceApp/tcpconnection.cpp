@@ -124,11 +124,11 @@ bool TcpConnection::sendFile(int command, const QString fileName, volatile int& 
     return true;
 }
 
-bool TcpConnection::sendImage(int tag, QByteArray& byteArray, int& errorCode, QString& message, volatile bool& abortRequested)
+bool TcpConnection::sendImage(int tag, QByteArray& byteArray, int& errorCode, QString& message, volatile bool& abortRequested, int flags)
 {
     const char * buf = byteArray.constData();
     int len = byteArray.size();
-    int header[2] = { tag, len };
+    int header[3] = { tag, len, flags };
     if(send((const char *)&header[0], sizeof(header)) < 0) {
         errorCode = -1;
         message.sprintf("ERROR: sendImage: write(header:%ld) - tag:%d", sizeof(header), tag);

@@ -19,6 +19,12 @@ int runConfigure(int sock, Arguments * args, std::string& clientName, InfComComm
     ERRCHK(sendCommand(sock, config_info, clientName));
     info("number of pre-configured models: %d", modelCount);
     ERRCHK(recvCommand(sock, reply, clientName, INFCOM_CMD_CONFIG_INFO));
+    // check if client is requesting priority mode
+    if (reply.data[3])
+    {
+        // set batch_size
+        args->setPriorityMode(reply.data[4]);
+    }
     for(size_t i = 0; i < modelCount; i++) {
         // send: INFCOM_CMD_MODEL_INFO { iw, ih, ic, ow, oh, oc } "modelName"
         std::tuple<std::string,int,int,int,int,int,int,int,float,float,float,float,float,float,std::string> model_config = args->getConfiguredModelInfo(i);

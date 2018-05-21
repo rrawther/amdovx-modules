@@ -31,7 +31,8 @@ INFCOM_MAX_PACKET_SIZE               = 8192
 
 # process command-lines
 if len(sys.argv) < 2:
-    print('Usage: python annInferenceApp.py [-v] [-host:<hostname>] [-port:<port>] -model:<modelName> [-upload:deploy.prototxt,weights.caffemodel,iw,ih,ic,mode,order,m0,m1,m2,a0,a1,a2[,save=modelName[,override][,passwd=...]]] [-synset:<synset.txt>] [-output:<output.csv>] [-shadow] [-detect] [-topK:top_k] [-shadowSetup:<checkFolderList>,<CreateFolderList>,<files>]<folder>|<file(s)>')
+    print('Usage: python annInferenceApp.py [-v] [-host:<hostname>] [-port:<port>] -model:<modelName> [-upload:deploy.prototxt,weights.caffemodel,iw,ih,ic,mode,order,m0,m1,m2,a0,a1,a2[,save=modelName[,override][,passwd=...]]]') 
+    print('[-synset:<synset.txt>] [-output:<output.csv>] [-shadow] [-detect] [-topK:top_k] [-priority:0,1] [-shadowSetup:<checkFolderList>,<CreateFolderList>,<files>]<folder>|<file(s)>]')
     sys.exit(1)
 host = 'localhost'
 port = 28282
@@ -42,6 +43,7 @@ outputFileName = None
 synsetFileName = None
 uploadParams = ''
 shadowParams = ''
+priorityParams = ''
 verbose = False
 sendFileName = 0
 topkValue = 0
@@ -83,6 +85,9 @@ while arg < len(sys.argv):
         arg = arg + 1
     elif sys.argv[arg][:13] == '-shadowSetup:':
         shadowParams = sys.argv[arg][13:]    
+        arg = arg + 1
+    elif sys.argv[arg][:10] == '-priority:':
+        priorityParams = sys.argv[arg][10:]    
         arg = arg + 1
     elif sys.argv[arg][:1] == '-':
         print('ERROR: invalid option: ' + sys.argv[arg])
@@ -140,11 +145,11 @@ def sendImageFile(sock,tag,fileName):
     fp = open(fileName,'r')
     buf = fp.read()
     fp.close()
-    sock.send(struct.pack('ii',tag,len(buf)) + buf + struct.pack('i',INFCOM_EOF_MARKER))
+    sock.send(struct.pack('iii',tag,len(buf),0) + buf + struct.pack('i',INFCOM_EOF_MARKER))
 
 def sendImageFileName(sock,tag,fileName):
     buf = bytearray(fileName)
-    sock.send(struct.pack('ii',tag,len(buf)) + buf + struct.pack('i',INFCOM_EOF_MARKER))
+    sock.send(struct.pack('iii',tag,len(buf),1) + buf + struct.pack('i',INFCOM_EOF_MARKER))
 
 def sendFileNameAndFile(sock,tag,imageDirPath,fileName):
     fp = open(imageDirPath+fileName,'r')
@@ -153,7 +158,7 @@ def sendFileNameAndFile(sock,tag,imageDirPath,fileName):
     hdr = (len(fileName)<<16)| (len(buf)-len(fileName))
     sock.send(struct.pack('ii',tag,hdr) + buf + struct.pack('i',INFCOM_EOF_MARKER))
 
-def getConfig(host,port):
+def getConfig(host,port, priorityParams):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         sock.connect((host, port))
@@ -163,6 +168,10 @@ def getConfig(host,port):
     maxGPUs = 0
     numModels = 0
     modelList = []
+    pGPU = 0
+    pBatchSize = 0
+    if priorityParams != '':
+        pGPU, pBatchSize = priorityParams.split(',')
     while True:
         info = recvpkt(sock)
         if info[0] != INFCOM_MAGIC:
@@ -175,7 +184,13 @@ def getConfig(host,port):
         elif info[1] == INFCOM_CMD_SEND_MODE:
             sendpkt(sock,(INFCOM_MAGIC,INFCOM_CMD_SEND_MODE,(INFCOM_MODE_CONFIGURE,),''))
         elif info[1] == INFCOM_CMD_CONFIG_INFO:
-            sendpkt(sock,info)
+            if priorityParams != '':
+                tmp = list(info[2])
+                tmp[3], tmp[4] = int(pGPU), int(pBatchSize)
+                info2 = tuple(tmp)
+                sendpkt(sock,(info[0], info[1], info2, info[3]))
+            else:  
+                sendpkt(sock,info)
             numModels = info[2][0]
             maxGPUs = info[2][1]
             modelCount = 0
@@ -479,7 +494,7 @@ def RunShadow(host,port,imageDirPath,shadowParams):
                     sendFilesCount = sendFilesCount + 1
 
 # get configuration from server
-config = getConfig(host,port)
+config = getConfig(host,port,priorityParams)
 GPUs = config[0]
 # run shadow
 if shadowParams != '':

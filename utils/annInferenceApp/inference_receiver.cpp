@@ -120,7 +120,7 @@ void inference_receiver::run()
                 bool failed = false;
                 for(int i = 0; i < count; i++) {
                     // send the image at nextImageToSend
-                    if(!connection->sendImage(nextImageToSend, (*imageBuffer)[nextImageToSend], progress->errorCode, progress->message, abortRequsted)) {
+                    if(!connection->sendImage(nextImageToSend, (*imageBuffer)[nextImageToSend], progress->errorCode, progress->message, abortRequsted, 0)) {
                         failed = true;
                         break;
                     }

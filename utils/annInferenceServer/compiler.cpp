@@ -90,8 +90,12 @@ int runCompiler(int sock, Arguments * args, std::string& clientName, InfComComma
     else {
         sprintf(modelName, "upload/model-%08d", args->getNextModelUploadCounter());
     }
+    int priorityMode = args->getPriorityMode();
     std::string modelFolder = args->getConfigurationDir() + "/" + modelName;
     std::string buildFolder = modelFolder + "/build";
+
+    if (priorityMode)
+        buildFolder = modelFolder + "/build_1";
     // remove modelFolder if exists
     std::string command = "/bin/rm -rf ";
     command += modelFolder;
@@ -170,6 +174,7 @@ int runCompiler(int sock, Arguments * args, std::string& clientName, InfComComma
         ERRCHK(recvCommand(sock, cmdUpdate, clientName, INFCOM_CMD_COMPILER_STATUS));
         return error_close(sock, "chdir('%s') failed", modelFolder.c_str());
     }
+    int batchSize = priorityMode ? args->getPriorityBatchSize() : args->getBatchSize();
     // step-1: run inference generator
     cmdUpdate.data[0] = 0;
     cmdUpdate.data[1] = 1;
@@ -178,7 +183,7 @@ int runCompiler(int sock, Arguments * args, std::string& clientName, InfComComma
     ERRCHK(recvCommand(sock, cmdUpdate, clientName, INFCOM_CMD_COMPILER_STATUS));
     // step-1.1: caffe2openvx on caffemodel for weights
     command = "caffe2openvx weights.caffemodel";
-    command += " " + std::to_string(args->getBatchSize())
+    command += " " + std::to_string(batchSize)
             +  " " + std::to_string(dimInput[2])
             +  " " + std::to_string(dimInput[1])
             +  " " + std::to_string(dimInput[0])
@@ -195,7 +200,7 @@ int runCompiler(int sock, Arguments * args, std::string& clientName, InfComComma
     }
     // step-1.2: caffe2openvx on prototxt for network structure
     command = "caffe2openvx deploy.prototxt";
-    command += " " + std::to_string(args->getBatchSize())
+    command += " " + std::to_string(batchSize)
             +  " " + std::to_string(dimInput[2])
             +  " " + std::to_string(dimInput[1])
             +  " " + std::to_string(dimInput[0])

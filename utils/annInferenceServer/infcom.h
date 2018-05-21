@@ -5,8 +5,8 @@
 //    client: (connect)
 //  * server: InfComCommand:INFCOM_CMD_SEND_MODE
 //    client: InfComCommand:INFCOM_CMD_SEND_MODE with data={INFCOM_MODE_CONFIGURE}
-//  * server: InfComCommand:INFCOM_CMD_CONFIG_INFO with data={numModels,maxGPUs}
-//    client: InfComCommand:INFCOM_CMD_CONFIG_INFO with data={numModels,maxGPUs}
+//  * server: InfComCommand:INFCOM_CMD_CONFIG_INFO with data={numModels,maxGPUs,shadowFolderAvailable}
+//    client: InfComCommand:INFCOM_CMD_CONFIG_INFO with data={numModels,maxGPUs,shadowFolderAvailable, GpuID, batchSize}, where GpuID specifies the GPU for running priority mode(0 default), batchSize requested for compiler (0 default)}
 //  * server: InfComCommand:INFCOM_CMD_MODEL_INFO with data={iw,ih,ic,ow,oh,oc,order,m0,m1,m2,a0,a1,a2} message=modelName
 //    client: InfComCommand:INFCOM_CMD_MODEL_INFO with data={iw,ih,ic,ow,oh,oc,order,m0,m1,m2,a0,a1,a2} message=modelName
 //  * server: (repeat INFCOM_CMD_MODEL_INFO for each of numModels)
@@ -44,7 +44,8 @@
 //    client: InfComCommand:INFCOM_CMD_SEND_MODE with data={INFCOM_MODE_INFERENCE,GPUs,iw,ih,ic,ow,oh,oc} message="modelName [options]"
 //  * server: InfComCommand:INFCOM_CMD_SEND_IMAGES with data={maxCount}
 //    client: InfComCommand:INFCOM_CMD_SEND_IMAGES with data={count} -- count:0..maxCount
-//    client: for each image: { <tag:32-bit> <size:32-bit> <byte-stream> <eof-marker:32-bit> }
+//    client: for each image: { <tag:32-bit> <size:32-bit> <flags> <byte-stream> <eof-marker:32-bit> }
+//            or {<tag:32-bit> <size:32-bit> <flags:32-bit> <bytearray(filename)> <eof-marker:32-bit> } if rf == 1
 //  * server: InfComCommand:INFCOM_CMD_INFERENCE_RESULT data={imageCount,0,<tag1>,<label1>,<tag2>,<label2>,...} upto 14 tags
 //    client: InfComCommand:INFCOM_CMD_INFERENCE_RESULT data={imageCount,0,<tag1>,<label1>,<tag2>,<label2>,...} upto 14 tags
 //              For <label0:prob0> in below command is specified as <label+prob*65536>" where label is UINT16 and prob is UQ1.15 fixed-point representation.

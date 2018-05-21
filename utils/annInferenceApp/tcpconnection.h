@@ -13,7 +13,7 @@ public:
     bool recvCmd(InfComCommand& cmd);
     bool sendCmd(const InfComCommand& cmd);
     bool sendFile(int command, const QString fileName, volatile int& progress, QString& mesg, volatile bool& abortRequested);
-    bool sendImage(int tag, QByteArray& byteArray, int& errorCode, QString& message, volatile bool& abortRequested);
+    bool sendImage(int tag, QByteArray& byteArray, int& errorCode, QString& message, volatile bool& abortRequested, int flags);
 
 protected:
     int recv(void * pkt, size_t len);

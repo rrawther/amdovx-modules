@@ -56,7 +56,7 @@ InferenceEngine::InferenceEngine(int sock_, Arguments * args_, std::string clien
     modelName = modelName_;
     options = options_;
     // configuration
-    batchSize = args->getBatchSize();
+    batchSize = args->getPriorityMode()? args->getPriorityBatchSize(): args->getBatchSize();
     inputSizeInBytes = 4 * dimInput[0] * dimInput[1] * dimInput[2] * batchSize;
     outputSizeInBytes = 4 * dimOutput[0] * dimOutput[1] * dimOutput[2] * batchSize;
     if (detectBoundingBoxes)
@@ -515,6 +515,8 @@ int InferenceEngine::run()
     }
     if(found) {
         modulePath = modelPath + "/build/" + MODULE_LIBNAME;
+        if(args->getPriorityMode())
+            modulePath = modelPath + "/build_1/" + MODULE_LIBNAME;
         moduleHandle = dlopen(modulePath.c_str(), RTLD_NOW | RTLD_LOCAL);
         if(!moduleHandle) {
             found = false;
@@ -869,16 +871,17 @@ int InferenceEngine::run()
                 int i = 0;
                 for(; i < imageCountReceived; i++) {
                     // get header with tag and size info
-                    int header[2] = { 0, 0 };
+                    int header[3] = { 0, 0, 0 };
                     ERRCHK(recvBuffer(sock, &header, sizeof(header), clientName));
                     int tag = header[0];
                     int size = header[1];
+                    int flags = header[2];
                     // do sanity check with unreasonable parameters
                     if(tag < 0 || size <= 0 || size > 50000000) {
                         return error_close(sock, "invalid (tag:%d,size:%d) from %s", tag, size, clientName.c_str());
                     }
                     char * byteStream = 0;
-                    if (receiveFileNames)
+                    if (receiveFileNames || (flags&1))
                     {
                         std::string fileNameDir = args->getlocalShadowRootDir() + "/";
                         char * buff = new char [size];
@@ -995,7 +998,7 @@ void InferenceEngine::workMasterInputQ()
     info("workMasterInputQ: started for %s", clientName.c_str());
     args->unlock();
 
-    int batchSize = args->getBatchSize();
+    int batchSize = args->getPriorityMode()? args->getPriorityBatchSize(): args->getBatchSize();
     int totalInputCount = 0;
     int inputCountInBatch = 0, gpu = 0;
     for(;;) {

@@ -9,6 +9,9 @@
 #include <QMouseEvent>
 #include <mutex>
 
+#include <opencv2/opencv.hpp>
+#include <opencv2/highgui.hpp>
+
 struct runtime_receiver_status {
     bool completed;
     int errorCode;

@@ -44,8 +44,8 @@
 //    client: InfComCommand:INFCOM_CMD_SEND_MODE with data={INFCOM_MODE_INFERENCE,GPUs,iw,ih,ic,ow,oh,oc,rf, top_k} message="modelName [options]", where rf==1 indicates client sending filenames & top_k for topK inference results
 //  * server: InfComCommand:INFCOM_CMD_SEND_IMAGES with data={maxCount}
 //    client: InfComCommand:INFCOM_CMD_SEND_IMAGES with data={count} -- count:0..maxCount
-//    client: for each image: { <tag:32-bit> <size:32-bit> <byte-stream> <eof-marker:32-bit> }
-//            or {<tag:32-bit> <size:32-bit> bytearray(filename)> <eof-marker:32-bit> } if rf == 1
+//    client: for each image: { <tag:32-bit> <size:32-bit> <flags> <byte-stream> <eof-marker:32-bit> }
+//            or {<tag:32-bit> <size:32-bit> <flags:32-bit> <bytearray(filename)> <eof-marker:32-bit> } if rf == 1
 //  * server: InfComCommand:INFCOM_CMD_INFERENCE_RESULT data={imageCount,0,<tag1>,<label1>,<tag2>,<label2>,...} upto 14 tags
 //    client: InfComCommand:INFCOM_CMD_INFERENCE_RESULT data={imageCount,0,<tag1>,<label1>,<tag2>,<label2>,...} upto 14 tags
 //              For <label0:prob0> in below command is specified as <label+prob*65536>" where label is UINT16 and prob is UQ1.15 fixed-point representation.

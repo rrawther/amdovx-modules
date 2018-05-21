@@ -1,6 +1,8 @@
 #ifndef INFERENCE_VIEWER_H
 #define INFERENCE_VIEWER_H
 
+#define ENABLE_PRIORITY_CAPTURE   0
+
 #include "inference_receiver.h"
 #include <QWidget>
 #include <QFont>
@@ -28,6 +30,7 @@ public:
     QVector<int> imageLabel;
     QVector<int> inferenceResultTop;
     QVector<QString> inferenceResultSummary;
+    //QVector<QByteArray> imageCaptureBuffer;
     // receiver
     QThread * receiver_thread;
     inference_receiver * receiver_worker;
@@ -63,6 +66,7 @@ public:
     QString modelName;
     int maxImageDataSize;
     bool sendScaledImages;
+    //cv::VideoCapture *vidCap;
 };
 
 class inference_viewer : public QWidget

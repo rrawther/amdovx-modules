@@ -412,6 +412,32 @@ void inference_viewer::paintEvent(QPaintEvent *)
         }
     }
     if(!state->imageLoadDone) {
+#if ENABLE_PRIORITY_CAPTURE
+        // use opencv capture and encode into jpeg
+        if (!state->vidCap)
+            state->vidCap = new cv::VideoCapture(0);  // use default capture device
+        if (!state->vidCap->isOpened()) {
+            printf("ERROR: OpenCV device capture for device 0 failed\n");
+            exit(1);
+        }
+        int capWidth = state->vidCap->get(CV_CAP_PROP_FRAME_WIDTH);
+        int capHeight = state->vidCap->get(CV_CAP_PROP_FRAME_HEIGHT);
+        cv::Mat capFrame;
+        *(state->vidCap) >> capFrame;
+        std::vector<uchar> bitstream;
+        if (capFrame.empty())
+        {
+            printf("ERROR: OpenCV capture frame failed\n");
+            exit(1);
+        }
+        cv::imencode(".jpg",capFrame,bitstream);
+        QByteArray* byteArray = new QByteArray(reinterpret_cast<const char*>(bitstream.data()), bitstream.size());
+        state->imageCaptureBuffer.push_back(*byteArray);
+        state->imageLoadCount++;
+        progress.images_loaded = state->imageLoadCount;
+        // save file to disc and store the filename in state->imageDataFilenames
+
+#else
         for(int i = 0; i < loadBatchSize; i++) {
             if(state->imageLoadCount == state->imageDataSize || state->abortLoadingRequested) {
                 state->imageDataSize = state->imageLoadCount;
@@ -443,8 +469,35 @@ void inference_viewer::paintEvent(QPaintEvent *)
             state->imageLoadCount++;
             progress.images_loaded = state->imageLoadCount;
         }
+#endif
     }
     if(state->imageLoadCount > 0 && !state->imagePixmapDone) {
+#if ENABLE_PRIORITY_CAPTURE
+        if(state->imageLoadDone && state->imagePixmapCount == state->imageLoadCount) {
+            state->imagePixmapDone = true;
+            progress.images_decoded = state->imagePixmapCount;
+            progress.completed_decode = true;
+            break;
+        }
+        if(state->imagePixmapCount >= state->imageBuffer.size()) {
+            break;
+        }
+        QPixmap pixmap;
+        if(!pixmap.loadFromData(state->imageCaptureBuffer[state->imagePixmapCount])) {
+            state->imagePixmapDone = true;
+            progress.images_decoded = state->imagePixmapCount;
+            progress.completed_decode = true;
+            break;
+        }
+        if(state->sendScaledImages) {
+            QBuffer buffer(&state->imageBuffer[state->imagePixmapCount]);
+            auto scaled = pixmap.scaled(state->inputDim[0], state->inputDim[1], Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            scaled.save(&buffer, "PNG");
+        }
+        state->imagePixmap.push_back(pixmap.scaled(ICON_SIZE, ICON_SIZE, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+        state->imagePixmapCount++;
+        progress.images_decoded = state->imagePixmapCount;
+#endif
         for(int i = 0; i < scaleBatchSize; i++) {
             if(state->imageLoadDone && state->imagePixmapCount == state->imageLoadCount) {
                 state->imagePixmapDone = true;

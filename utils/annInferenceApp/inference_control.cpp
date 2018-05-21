@@ -805,6 +805,10 @@ void inference_control::runConnection()
             connection->sendCmd(reply);
         }
         else if(cmd.command == INFCOM_CMD_CONFIG_INFO) {
+#if ENABLE_PRIORITY_CAPTURE
+            cmd.data[3] = 1;        // hardcoding to GPU 1 for testing
+            cmd.data[4] = 1;        // hardcoding to BatchSize 1 for testing
+#endif
             connection->sendCmd(cmd);
             pendingModelCount = cmd.data[0];
             maxGPUs = cmd.data[1];
