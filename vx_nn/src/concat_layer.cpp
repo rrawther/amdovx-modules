@@ -315,7 +315,6 @@ vx_status publishConcatLayer(vx_context context)
 
 static vx_status VX_CALLBACK validateConcatLayer(vx_node node, const vx_reference parameters[], vx_uint32 num, vx_meta_format metas[])
 {
-
     //check tensor dims and type for input
     vx_enum type;
     vx_size num_dims;
@@ -338,6 +337,7 @@ static vx_status VX_CALLBACK validateConcatLayer(vx_node node, const vx_referenc
                     input2_dims[0], input2_dims[1], input2_dims[2], input2_dims[3]);
     num_channels += input2_dims[2];
     int i = 3;
+
     // alias input1 and input2 to output
     if (output_dims[3] == 1) {
         vx_status status = vxAliasTensor((vx_tensor)parameters[0], alias_offset, (vx_tensor)parameters[1]);
@@ -345,6 +345,7 @@ static vx_status VX_CALLBACK validateConcatLayer(vx_node node, const vx_referenc
         {
             printf("Concat output at offset %d is aliased to input0\n", (int)alias_offset);
         }
+
         alias_offset += input1_dims[0]*input1_dims[1]*input1_dims[2];
         status = vxAliasTensor((vx_tensor)parameters[0], alias_offset, (vx_tensor)parameters[2]);
         if (status == VX_SUCCESS)
@@ -393,7 +394,6 @@ static vx_status VX_CALLBACK validateConcatLayer(vx_node node, const vx_referenc
     ERROR_CHECK_STATUS(vxSetMetaFormatAttribute(metas[0], VX_TENSOR_DATA_TYPE, &type, sizeof(type)));
     ERROR_CHECK_STATUS(vxSetMetaFormatAttribute(metas[0], VX_TENSOR_NUMBER_OF_DIMS, &num_dims, sizeof(num_dims)));
     ERROR_CHECK_STATUS(vxSetMetaFormatAttribute(metas[0], VX_TENSOR_DIMS, output_dims, sizeof(output_dims)));
-
 
     return VX_SUCCESS;
 }
@@ -484,17 +484,30 @@ static vx_status VX_CALLBACK initializeConcatLayer(vx_node node, const vx_refere
     {
         // check if the input and output tensors are aliased
         data->aliased = vxIsTensorAliased((vx_tensor)parameters[0], alias_offset[0], (vx_tensor)parameters[1]);
-        std::cout<< "tensor aliased for 0" << data->aliased << std::endl;
+        //std::cout<< "tensor aliased for 0 " << data->aliased << std::endl;
         data->aliased &= vxIsTensorAliased((vx_tensor)parameters[0], alias_offset[1], (vx_tensor)parameters[2]);
-        std::cout<< "tensor aliased for 1" << data->aliased << std::endl;
+        //std::cout<< "tensor aliased for 1 " << data->aliased << std::endl;
         for (int i = 2; i <  data->num_inputs; i++) {
             data->aliased &= vxIsTensorAliased((vx_tensor)parameters[0], alias_offset[i], (vx_tensor)parameters[i+1]);
             std::cout<< "tensor aliased for " << i <<" " << data->aliased << std::endl;
         }
     }
-    std::cout << "data aliased " << data->aliased << "num inputs :: " << data->num_inputs << std::endl;
-  //  std::cout << "alias offsets "<< alias_offset[0] << " " << alias_offset[1] << " " << alias_offset[2] << " " << alias_offset[3] << " " << alias_offset[4] << std::endl;
+//    std::cout << "data aliased " << data->aliased << "num inputs :: " << data->num_inputs << std::endl;
+#if 0   // added for
     // if batch_size is not 1 or all inputs are aliased, then use a kernel to concat
+    ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[0], VX_TENSOR_BUFFER_OPENCL, &data->output_mem, sizeof(cl_mem)));
+    ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[0], VX_TENSOR_OFFSET_OPENCL, &out_offset, sizeof(vx_size)));
+    ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[1], VX_TENSOR_BUFFER_OPENCL, &data->input_mem[0], sizeof(cl_mem)));
+    ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[2], VX_TENSOR_BUFFER_OPENCL, &data->input_mem[1], sizeof(cl_mem)));
+    ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[1], VX_TENSOR_OFFSET_OPENCL, &in_offsets[0], sizeof(vx_size)));
+    ERROR_CHECK_STATUS(vxQueryTensor((vx_tensor)parameters[2], VX_TENSOR_OFFSET_OPENCL, &in_offsets[1], sizeof(vx_size)));
+    cl_int err;
+    size_t out_size = 0, in1_size = 0, in2_size = 0;
+    err = clGetMemObjectInfo(data->output_mem, CL_MEM_SIZE, sizeof(out_size), &out_size, NULL);
+    err = clGetMemObjectInfo(data->input_mem[0], CL_MEM_SIZE, sizeof(in1_size), &in1_size, NULL);
+    err = clGetMemObjectInfo(data->input_mem[1], CL_MEM_SIZE, sizeof(in2_size), &in2_size, NULL);
+    printf("cl_mem_out: %p cl_mem1:%p cl_mem2: %p[%d %d %d]\n", data->output_mem, data->input_mem[0], data->input_mem[1], out_size, in1_size, in2_size);
+#endif
     if ((data->batch_size != 1) || !data->aliased)
     {
         vx_size out_offset, in_offsets[8];
