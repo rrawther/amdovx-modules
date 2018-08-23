@@ -238,9 +238,9 @@ enum ide_status_e {
     IDE_ERROR_NOT_IMPLEMENTED            = -2,/*!< \brief Indicates that the requested API is missing. */
     IDE_FAILURE                          = -1,/*!< \brief Indicates a generic error code, used when no other describes the error. */
     IDE_SUCCESS                          =  0,/*!< \brief No error. */
-}
+};
 
-typdef int ide_status
+typedef int ide_status;
 
 #ifndef IDE_API_ENTRY
 #define IDE_API_ENTRY
@@ -248,21 +248,23 @@ typdef int ide_status
 #ifndef IDE_API_CALL
 #if defined(_WIN32)
 #define IDE_API_CALL __stdcall
+#define IDE_CALLBACK __stdcall
 #else
 #define IDE_API_CALL
+#define IDE_CALLBACK
 #endif
 #endif
 
 //
-extern "C" IDE_API_ENTRY int             IDE_API_CALL ideQueryInference(char **inp_name, size_t *inp_dims, char **out_name, size_t *out_dims);
-extern "C" IDE_API_ENTRY int             IDE_API_CALL ideSetBackend(const char *nameBackend);
-extern "C" IDE_API_ENTRY ide_handle      IDE_API_CALL ideCreateInference(void *input, void *output, const char * binaryFilename);
-extern "C" IDE_API_ENTRY int             IDE_API_CALL ideSetInput(ide_handle handle, void * inp_tensor_mem);
-extern "C" IDE_API_ENTRY int             IDE_API_CALL ideGetOutput(ide_handle handle, void * out_tensor_mem);
-extern "C" IDE_API_ENTRY int             IDE_API_CALL ideProcessInference(ide_handle handle, int num_iterations = 1);
-extern "C" IDE_API_ENTRY int             IDE_API_CALL ideScheduleInference(ide_handle handle);
-extern "C" IDE_API_ENTRY int             IDE_API_CALL ideWaitForCompletion(ide_handle handle);
-extern "C" IDE_API_ENTRY int             IDE_API_CALL ideReleaseInference(ide_handle handle);
+extern "C" IDE_API_ENTRY ide_status     IDE_API_CALL ideQueryInference(char **inp_name, size_t *inp_dims, char **out_name, size_t *out_dims);
+extern "C" IDE_API_ENTRY ide_status     IDE_API_CALL ideSetBackend(const char *nameBackend);
+extern "C" IDE_API_ENTRY ide_handle     IDE_API_CALL ideCreateInference(void *input, void *output, const char * binaryFilename);
+extern "C" IDE_API_ENTRY ide_status     IDE_API_CALL ideSetInput(ide_handle handle, void * inp_tensor_mem);
+extern "C" IDE_API_ENTRY ide_status     IDE_API_CALL ideGetOutput(ide_handle handle, void * out_tensor_mem);
+extern "C" IDE_API_ENTRY ide_status     IDE_API_CALL ideProcessInference(ide_handle handle, int num_iterations = 1);
+extern "C" IDE_API_ENTRY ide_status     IDE_API_CALL ideScheduleInference(ide_handle handle);
+extern "C" IDE_API_ENTRY ide_status     IDE_API_CALL ideWaitForCompletion(ide_handle handle);
+extern "C" IDE_API_ENTRY ide_status     IDE_API_CALL ideReleaseInference(ide_handle handle);
 
 #endif
 """)
@@ -344,7 +346,7 @@ IDE_API_ENTRY ide_status IDE_API_CALL ideReleaseInference(ide_handle handle)
 #define ERROR_CHECK_OBJECT(obj) { vx_status status = vxGetStatus((vx_reference)(obj)); if(status != VX_SUCCESS) { vxAddLogEntry((vx_reference)context, status     , "ERROR: failed with status = (%%d) at " __FILE__ "#%%d\\n", status, __LINE__); return status; } }
 #define ERROR_CHECK_STATUS(call) { vx_status status = (call); if(status != VX_SUCCESS) { vxAddLogEntry((vx_reference)context, status, "ERROR: failed with status = (%%d) at " __FILE__ "#%%d\\n", status, __LINE__); return status; } }
 
-static void VX_CALLBACK log_callback(vx_context context, vx_reference ref, vx_status status, const vx_char string[])
+static void IDE_CALLBACK log_callback(vx_context context, vx_reference ref, vx_status status, const vx_char string[])
 {
     size_t len = strlen(string);
     if (len > 0) {
@@ -355,7 +357,7 @@ static void VX_CALLBACK log_callback(vx_context context, vx_reference ref, vx_st
     }
 }
 
-VX_API_ENTRY vx_status VX_API_CALL ideAddToGraph(vx_graph graph, %s, %s, const char * binaryFilename)
+IDE_API_ENTRY vx_status IDE_API_CALL ideAddToGraph(vx_graph graph, %s, %s, const char * binaryFilename)
 {
     vx_context context = vxGetContext((vx_reference)graph);
     ERROR_CHECK_OBJECT(context);
@@ -708,6 +710,10 @@ IDE_API_ENTRY ide_status IDE_API_CALL ideQueryInference(char **inp_name, size_t 
 }
 """ %(graph.inputs[0].name, ', '.join([str(v) for v in reversed(input_shape)]), graph.outputs[0].name, \
       ', '.join([str(v) for v in reversed(input_shape)])))
+        if len(output_shape) == 4:
+            tshape = [output_shape[0], output_shape[1], output_shape[2], output_shape[3]]
+        else:
+            tshape = [1, 1, output_shape[0], output_shape[1]]
         f.write( \
 """
 IDE_API_ENTRY ide_status IDE_API_CALL ideSetBackend(const char *nameBackend)
@@ -739,7 +745,7 @@ IDE_API_ENTRY ide_handle IDE_API_CALL ideCreateInference(const char * binaryFile
             }
             else {
                 vx_size inp_dim[4] = { %s };
-                vx_size inp_stride[4] = { 4, (vx_size)4 * inp_dim[0], (vx_size)4 * inp_dim[0] * inp_dim[1], (vx_size)4 * inp_dim[0] * inp_dim[1] * inp_dim[2]}
+                vx_size inp_stride[4] = { 4, %d, %d, %d};
                 if (!mem_type) {
                     handle->input = vxCreateTensorFromHandle(handle->context, 4, inp_dim, VX_TYPE_FLOAT32, 0, inp_stride, inp_mem, VX_MEMORY_TYPE_HOST);
                 }
@@ -747,7 +753,7 @@ IDE_API_ENTRY ide_handle IDE_API_CALL ideCreateInference(const char * binaryFile
                     cl_mem inp_mem = nullptr;
                     handle->input = vxCreateTensorFromHandle(handle->context, 4, inp_dim, VX_TYPE_FLOAT32, 0, inp_stride, inp_mem, VX_MEMORY_TYPE_OPENCL);
                 }
-                if((status = vxGetStatus((vx_reference)handle->input)) != VX_SUCCESS) {
+                if((status = vxGetStatus((vx_reference)handle->input)) != VX_SUCCESS)
                     printf("ERROR: vxCreateTensor(input:[%s]): failed (%%d)\\n", status);
                 else {
                     vx_size out_dim[%d] = { %s };
@@ -787,7 +793,8 @@ IDE_API_ENTRY ide_handle IDE_API_CALL ideCreateInference(const char * binaryFile
 
     return handle;
 }
-""" % (', '.join([str(v) for v in reversed(input_shape)]), 'x'.join([str(v) for v in input_shape]), len(output_shape), \
+""" % (', '.join([str(v) for v in reversed(input_shape)]), tshape[3]*4, tshape[2]*tshape[3]*4, tshape[1]*tshape[2]*tshape[3]*4, \
+       'x'.join([str(v) for v in input_shape]), len(output_shape), \
        ', '.join([str(v) for v in reversed(output_shape)]), len(output_shape), 'x'.join([str(v) for v in output_shape])))
 
         f.write( \
@@ -806,10 +813,10 @@ IDE_API_ENTRY ide_status IDE_API_CALL ideSetInput(ide_handle handle, void * inp_
             printf("ERROR: ideSetInput: vxSwapTensorHandle: failed (%%d)\\n", status);
         }
     }
-    return status;
+    return (ide_status)status;
 }
 
-IDE_API_ENTRY int IDE_API_CALL ideGetOutput(ide_handle handle, void * out_tensor_mem)
+IDE_API_ENTRY ide_status IDE_API_CALL ideGetOutput(ide_handle handle, void * out_tensor_mem)
 {
     vx_status status = VX_SUCCESS;
     vx_size stride[4] = { 4, %d, %d, %d };
@@ -819,66 +826,62 @@ IDE_API_ENTRY int IDE_API_CALL ideGetOutput(ide_handle handle, void * out_tensor
     }
     else if(!out_tensor_mem) {
         status = VX_FAILURE;
-        printf("ERROR: ideGetOutput: invalid output buffer %p\\n", out_tensor_mem);
+        printf("ERROR: ideGetOutput: invalid output buffer %%p\\n", out_tensor_mem);
     }
     else if(handle->output && (status = vxCopyTensorPatch(handle->output, %d, nullptr, nullptr, stride, out_tensor_mem, VX_READ_ONLY, VX_MEMORY_TYPE_HOST)) != VX_SUCCESS) {
         printf("ERROR: ideGetOutput: vxCopyTensorPatch: failed (%%d)\\n", status);
     }
-    return status;
+    return (ide_status)status;
 }
 """ % (tshape[3]*4, tshape[2]*tshape[3]*4, tshape[1]*tshape[2]*tshape[3]*4, len(output_shape)))
 
         f.write( \
 """
-IDE_API_ENTRY int IDE_API_CALL ideProcessInference(ide_handle handle)
+IDE_API_ENTRY ide_status IDE_API_CALL ideProcessInference(ide_handle handle)
 {
     vx_status status = VX_SUCCESS;
     if(!handle) {
         status = VX_FAILURE;
         printf("ERROR: ideProcessInference: invalid handle\\n");
     }
-    else if (status = vxProcessGraph(handle->graph)){
-            printf("ERROR: ideGetOutput: vxProcessGraph: failed (%%d)\\n", status);
-        }
+    else if (status = vxProcessGraph(handle->graph)) {
+        printf("ERROR: ideGetOutput: vxProcessGraph: failed (%%d)\\n", status);
     }
-    return status;
+    return (ide_status)status;
 }
 
-IDE_API_ENTRY int IDE_API_CALL ideScheduleInference(ide_handle handle)
+IDE_API_ENTRY ide_status IDE_API_CALL ideScheduleInference(ide_handle handle)
 {
     vx_status status = VX_SUCCESS;
     if(!handle) {
         status = VX_FAILURE;
         printf("ERROR: ideScheduleInference: invalid handle\\n");
     }
+    else if ((status = vxScheduleGraph(handle->graph)) == VX_SUCCESS)
+        handle->scheduled = true;
     else {
-            if (status = vxScheduleGraph(handle->graph)) == VX_SUCCESS)
-                handle->scheduled = true;
-            else
-                printf("ERROR: ideScheduleInference: failed (%%d)\\n", status);
-        }
+        handle->scheduled = false;
+        printf("ERROR: ideScheduleInference: failed (%%d)\\n", status);
     }
-    return status;
+    return (ide_status)status;
 }
 
-IDE_API_ENTRY int IDE_API_CALL ideWaitForCompletion(ide_handle handle)
+IDE_API_ENTRY ide_status IDE_API_CALL ideWaitForCompletion(ide_handle handle)
 {
     vx_status status = VX_SUCCESS;
     if(!handle) {
         status = VX_FAILURE;
         printf("ERROR: ideWaitForCompletion: invalid handle\\n");
     }
-    else {
-            if (status = vxWaitGraph(handle->graph)) == VX_SUCCESS)
-                handle->scheduled = false;
-            else
-                printf("ERROR: ideWaitForCompletion: failed\\n");
-        }
-    }
-    return status;
+    else if(handle->scheduled && ((status = vxWaitGraph(handle->graph)) == VX_SUCCESS)) {
+        handle->scheduled = false;
+    } else
+        printf("ERROR: ideWaitForCompletion: failed\\n");
+
+    return (ide_status)status;
 }
 
-IDE_API_ENTRY int IDE_API_CALL ideReleaseInference(ide_handle handle)
+IDE_API_ENTRY ide_status IDE_API_CALL ideReleaseInference(ide_handle handle)
 {
     vx_status status = VX_SUCCESS;
     if(!handle) {
@@ -900,7 +903,7 @@ IDE_API_ENTRY int IDE_API_CALL ideReleaseInference(ide_handle handle)
     else {
         delete handle;
     }
-    return status;
+    return (ide_status)status;
 }
 
 """)
@@ -940,15 +943,15 @@ using namespace cv;
 #endif
 
 extern "C" {
-    typedef IDE_API_ENTRY int (VX_API_CALL *ideQueryInference_t)(char **inp_name, size_t *inp_dims, char **out_name, size_t *out_dims);
-    typedef IDE_API_ENTRY int (VX_API_CALL *ideSetBackend_t)();
-    typedef IDE_API_ENTRY ide_handle (VX_API_CALL *ideCreateInference_t)(void *input, void *output, const char * binaryFilename);
-    typedef IDE_API_ENTRY int  (VX_API_CALL *ideSetInput_t)(ide_handle handle, void * inp_tensor_mem);
-    typedef IDE_API_ENTRY int  (VX_API_CALL *ideGetOutput_t)(ide_handle handle, void * out_tensor_mem);
-    typedef IDE_API_ENTRY int  (VX_API_CALL *ideProcessInference_t)(ide_handle handle, int num_iterations = 1);
-    typedef IDE_API_ENTRY int  (VX_API_CALL *ideScheduleInference_t)(ide_handle handle);
-    typedef IDE_API_ENTRY int  (VX_API_CALL *ideWaitForCompletion_t)(ide_handle handle);
-    typedef IDE_API_ENTRY int  (VX_API_CALL *ideReleaseInference_t)(ide_handle handle);
+    typedef IDE_API_ENTRY ide_status (IDE_API_CALL *ideQueryInference_t)(char **inp_name, size_t *inp_dims, char **out_name, size_t *out_dims);
+    typedef IDE_API_ENTRY ide_status (IDE_API_CALL *ideSetBackend_t)();
+    typedef IDE_API_ENTRY ide_handle (IDE_API_CALL *ideCreateInference_t)(void *input, void *output, const char * binaryFilename);
+    typedef IDE_API_ENTRY ide_status (IDE_API_CALL *ideSetInput_t)(ide_handle handle, void * inp_tensor_mem);
+    typedef IDE_API_ENTRY ide_status (IDE_API_CALL *ideGetOutput_t)(ide_handle handle, void * out_tensor_mem);
+    typedef IDE_API_ENTRY ide_status (IDE_API_CALL *ideProcessInference_t)(ide_handle handle, int num_iterations = 1);
+    typedef IDE_API_ENTRY ide_status (IDE_API_CALL *ideScheduleInference_t)(ide_handle handle);
+    typedef IDE_API_ENTRY ide_status (IDE_API_CALL *ideWaitForCompletion_t)(ide_handle handle);
+    typedef IDE_API_ENTRY ide_status (IDE_API_CALL *ideReleaseInference_t)(ide_handle handle);
 };
 
 class InferenceDeployAPI
@@ -968,8 +971,8 @@ class InferenceDeployAPI
 
 public: 
     InferenceDeployAPI(const char *library_name);
-    ~InferenceDeployAPI();
-}
+    ~InferenceDeployAPI(){}
+};
 
 InferenceDeployAPI::InferenceDeployAPI(const char *library_name)
 {
@@ -987,41 +990,32 @@ InferenceDeployAPI::InferenceDeployAPI(const char *library_name)
     ideScheduleInference_f  = (ideScheduleInference_t) dlsym(libHandle, "ideScheduleInference");
     ideWaitForCompletion_f  = (ideWaitForCompletion_t) dlsym(libHandle, "ideWaitForCompletion");
     ideReleaseInference_f   = (ideReleaseInference_t) dlsym(libHandle, "ideReleaseInference");
-    if (!ideQueryInference_f)
-    {
-        printf("ERROR: couldn't find function ideQueryInference in module %%s \\n", library_name);      
+    if (!ideQueryInference_f) {
+        printf("ERROR: couldn't find function ideQueryInference in module %s \\n", library_name);      
     }
-    if (!ideSetBackend_f)
-    {
-        printf("ERROR: couldn't find function ideSetBackend in module %%s \\n", library_name);      
+    if (!ideSetBackend_f) {
+        printf("ERROR: couldn't find function ideSetBackend in module %s \\n", library_name);      
     }
-    if (!ideCreateInference_f)
-    {
-        printf("ERROR: couldn't find function ideQueryInference in module %%s \\n", library_name);      
+    if (!ideCreateInference_f) {
+        printf("ERROR: couldn't find function ideQueryInference in module %s \\n", library_name);      
     }
-    if (!ideSetInput_f)
-    {
-        printf("ERROR: couldn't find function ideQueryInference in module %%s \\n", library_name);      
+    if (!ideSetInput_f) {
+        printf("ERROR: couldn't find function ideQueryInference in module %s \\n", library_name);      
     }
-    if (!ideGetOutput_f)
-    {
-        printf("ERROR: couldn't find function ideQueryInference in module %%s \n", library_name);      
+    if (!ideGetOutput_f) {
+        printf("ERROR: couldn't find function ideQueryInference in module %s \\n", library_name);      
     }
-    if (!ideProcessInference_f)
-    {
-        printf("ERROR: couldn't find function ideProcessInference in module %%s \n", library_name);      
+    if (!ideProcessInference_f) {
+        printf("ERROR: couldn't find function ideProcessInference in module %s \\n", library_name);      
     }
-    if (!ideScheduleInference_f)
-    {
-        printf("ERROR: couldn't find function ideScheduleInference in module %%s \n", library_name);      
+    if (!ideScheduleInference_f) {
+        printf("ERROR: couldn't find function ideScheduleInference in module %s \\n", library_name);      
     }
-    if (!ideWaitForCompletion_f)
-    {
-        printf("ERROR: couldn't find function ideWaitForCompletion in module %%s \n", library_name);      
+    if (!ideWaitForCompletion_f) {
+        printf("ERROR: couldn't find function ideWaitForCompletion in module %s \\n", library_name);      
     }
-    if (!ideReleaseInference)
-    {
-        printf("ERROR: couldn't find function ideReleaseInference in module %%s \n", library_name);      
+    if (!ideReleaseInference) {
+        printf("ERROR: couldn't find function ideReleaseInference in module %s \\n", library_name);      
     }
 }
 
@@ -1072,20 +1066,19 @@ int main(int argc, const char ** argv)
     const char * inpFileName  = argv[3];
     const char * outFileName  = argv[4];
     int bPeformanceRun = 0; 
-    if (argc > 4) &&!strcmp(argv[5], "-t")
+    if ((argc > 4) &&!strcmp(argv[5], "-t"))
         bPeformanceRun = 1;
     // Create InferenceDeploy Object
     InferenceDeployAPI *infDeploy = new InferenceDeployAPI(infdeploylib);
 
-    if (infDeploy->ideQueryInference_f(&inpName.cstr(), inp_dims, &outName.cstr(), out_dims))
-    {
-        printf("ERROR: ideQueryInference_f returned failure \n");      
+    if (infDeploy->ideQueryInference_f(&inpName.cstr(), inp_dims, &outName.cstr(), out_dims)) {
+        printf("ERROR: ideQueryInference_f returned failure \\n");      
     }
     else {
         ide_handle infHandle = infDeploy->ideCreateInference_f(weightsFile, 0);
         if (!infHandle)
         {
-            printf("ERROR: ideCreateInference_f returned failure \n");
+            printf("ERROR: ideCreateInference_f returned failure \\n");
             return -1;      
         }
         // create input tensor memory for swaphandle
@@ -1101,7 +1094,7 @@ int main(int argc, const char ** argv)
                 sprintf(imgFileName, inpFileName, (int)n);
                 Mat img = imread(imgFileName, CV_LOAD_IMAGE_COLOR);
                 if(!img.data || img.rows != inp_dims[1] || img.cols != inp_dims[0]) {
-                    printf("ERROR: invalid image or dimensions: %s\\n", imgFileName);
+                    printf("ERROR: invalid image or dimensions: %s \\n", imgFileName);
                     return -1;
                 }
                 for(vx_size y = 0; y < inp_dims[1]; y++) {
@@ -1140,11 +1133,11 @@ int main(int argc, const char ** argv)
             fclose(fp);
         }
         if (status = infDeploy->ideSetInput_f(ide_handle, inpMem)) {
-            printf("ERROR: ideSetInput_f returned failure(%%d) \n", status);
+            printf("ERROR: ideSetInput_f returned failure(%d) \\n", status);
             return -1;
         }
         if (status = infDeploy->ideProcessInference_f(ide_handle)) {
-            printf("ERROR: ideProcessInference_f returned failure(%%d) \n", status);
+            printf("ERROR: ideProcessInference_f returned failure(%d) \\n", status);
             return -1;
         }
         // allocate output tensor
@@ -1154,7 +1147,7 @@ int main(int argc, const char ** argv)
 
         // get output
         if (status = infDeploy->ideGetOutput_t(ide_handle, outMem)) {
-            printf("ERROR: ideProcessInference_f returned failure(%%d) \n", status);
+            printf("ERROR: ideProcessInference_f returned failure(%d) \\n", status);
             return -1;
         }
         if (strcmp(outFileName, "-") != 0)
@@ -1181,7 +1174,7 @@ int main(int argc, const char ** argv)
         }
         // Relese Inference
         infDeploy->ideReleaseInference_f(ide_handle);
-        printf("OK: Inference Deploy Successful\n");
+        printf("OK: Inference Deploy Successful \\n");
         // delete resources
         if (inpMem) delete[] inpMem;
         if (outMem) delete[] outMem;
