@@ -27,7 +27,7 @@ void sort_indexes(const std::vector<T> &v, std::vector<size_t> &idx) {
 
 InferenceEngine::InferenceEngine(int sock_, Arguments * args_, std::string clientName_, InfComCommand * cmd)
     : sock{ sock_ }, args{ args_ }, clientName{ clientName_ },
-      GPUs{ cmd->data[1] },
+      GPUs{ cmd->data[1] }, virtualGPUs{ 0 },
       dimInput{ cmd->data[2], cmd->data[3], cmd->data[4] },
       dimOutput{ cmd->data[5], cmd->data[6], cmd->data[7] },
       receiveFileNames { (bool)cmd->data[8] }, topK { cmd->data[9] }, detectBoundingBoxes { cmd->data[10] },
@@ -62,8 +62,11 @@ InferenceEngine::InferenceEngine(int sock_, Arguments * args_, std::string clien
     if (detectBoundingBoxes)
         region = new CYoloRegion();
     // lock devices
-    if(!args->lockGpuDevices(GPUs, device_id))
+    if(!args->lockGpuDevices(GPUs, device_id, virtualGPUs))
         deviceLockSuccess = true;
+#if !SIMULATE_VIRTUAL_GPUS
+    virtualGPUs = 0;
+#endif
     if (!args->getlocalShadowRootDir().empty()){
         useShadowFilenames = true;
         std::cout << "INFO::inferenceserver is running with LocalShadowFolder and infcom command receiving only filenames" << std::endl;
@@ -96,7 +99,7 @@ InferenceEngine::~InferenceEngine()
     }
     std::tuple<char*,int> endOfSequenceImage(nullptr,0);
     int endOfSequenceTag = -1;
-    for(int i = 0; i < GPUs; i++) {
+    for(int i = 0; i < (GPUs+virtualGPUs); i++) {
         if(queueDeviceTagQ[i]) {
             queueDeviceTagQ[i]->enqueue(endOfSequenceTag);
         }
@@ -589,26 +592,34 @@ int InferenceEngine::run()
     //////
     /// allocate OpenVX and OpenCL resources
     /// 
+#if !SIMULATE_VIRTUAL_GPUS
     for(int gpu = 0; gpu < GPUs; gpu++) {
-        //////
-        // create OpenCL context
-        cl_context_properties ctxprop[] = {
-            CL_CONTEXT_PLATFORM, (cl_context_properties)args->getPlatformId(),
-            0, 0
-        };
-        cl_int err;
-        opencl_context[gpu] = clCreateContext(ctxprop, 1, &device_id[gpu], NULL, NULL, &err);
-        if(err)
-            fatal("InferenceEngine: clCreateContext(#%d) failed (%d)", gpu, err);
-#if defined(CL_VERSION_2_0)
-        cl_queue_properties properties[] = { CL_QUEUE_PROPERTIES, 0, 0, 0 };
-        opencl_cmdq[gpu] = clCreateCommandQueueWithProperties(opencl_context[gpu], device_id[gpu], properties, &err);
 #else
-        opencl_cmdq[gpu] = clCreateCommandQueue(opencl_context[gpu], device_id[gpu], 0, &err);
+    for(int gpu = 0; gpu < (GPUs+virtualGPUs); gpu++) {
+        //////
+        if (gpu < GPUs) {
 #endif
-        if(err) {
-            fatal("InferenceEngine: clCreateCommandQueue(device_id[%d]) failed (%d)", gpu, err);
+            // create OpenCL context
+            cl_context_properties ctxprop[] = {
+                CL_CONTEXT_PLATFORM, (cl_context_properties)args->getPlatformId(),
+                0, 0
+            };
+            cl_int err;
+            opencl_context[gpu] = clCreateContext(ctxprop, 1, &device_id[gpu], NULL, NULL, &err);
+            if(err)
+                fatal("InferenceEngine: clCreateContext(#%d) failed (%d)", gpu, err);
+    #if defined(CL_VERSION_2_0)
+            cl_queue_properties properties[] = { CL_QUEUE_PROPERTIES, 0, 0, 0 };
+            opencl_cmdq[gpu] = clCreateCommandQueueWithProperties(opencl_context[gpu], device_id[gpu], properties, &err);
+    #else
+            opencl_cmdq[gpu] = clCreateCommandQueue(opencl_context[gpu], device_id[gpu], 0, &err);
+    #endif
+            if(err) {
+                fatal("InferenceEngine: clCreateCommandQueue(device_id[%d]) failed (%d)", gpu, err);
+            }
+#if SIMULATE_VIRTUAL_GPUS
         }
+#endif
 
         // create scheduler device queues
 #if  USE_ADVANCED_MESSAGE_Q
@@ -624,48 +635,58 @@ int InferenceEngine::run()
         queueDeviceOutputMemIdle[gpu] = new MessageQueue<cl_mem>();
         queueDeviceOutputMemBusy[gpu] = new MessageQueue<cl_mem>();
 
-        // create OpenCL buffers for input/output and add them to queueDeviceInputMemIdle/queueDeviceOutputMemIdle
-        cl_mem memInput = nullptr, memOutput = nullptr;
-        for(int i = 0; i < INFERENCE_PIPE_QUEUE_DEPTH; i++) {
-            cl_int err;
-            memInput = clCreateBuffer(opencl_context[gpu], CL_MEM_READ_WRITE, inputSizeInBytes, NULL, &err);
-            if(err) {
-                fatal("InferenceEngine: clCreateBuffer(#%d,%d) [#%d] failed (%d)", gpu, inputSizeInBytes, i, err);
+        if (gpu < GPUs) {
+            // create OpenCL buffers for input/output and add them to queueDeviceInputMemIdle/queueDeviceOutputMemIdle
+            cl_mem memInput = nullptr, memOutput = nullptr;
+            for(int i = 0; i < INFERENCE_PIPE_QUEUE_DEPTH; i++) {
+                cl_int err;
+                memInput = clCreateBuffer(opencl_context[gpu], CL_MEM_READ_WRITE, inputSizeInBytes, NULL, &err);
+                if(err) {
+                    fatal("InferenceEngine: clCreateBuffer(#%d,%d) [#%d] failed (%d)", gpu, inputSizeInBytes, i, err);
+                }
+                memOutput = clCreateBuffer(opencl_context[gpu], CL_MEM_READ_WRITE, outputSizeInBytes, NULL, &err);
+                if(err) {
+                    fatal("InferenceEngine: clCreateBuffer(#%d,%d) [#%d] failed (%d)", gpu, outputSizeInBytes, i, err);
+                }
+                queueDeviceInputMemIdle[gpu]->enqueue(memInput);
+                queueDeviceOutputMemIdle[gpu]->enqueue(memOutput);
             }
-            memOutput = clCreateBuffer(opencl_context[gpu], CL_MEM_READ_WRITE, outputSizeInBytes, NULL, &err);
-            if(err) {
-                fatal("InferenceEngine: clCreateBuffer(#%d,%d) [#%d] failed (%d)", gpu, outputSizeInBytes, i, err);
-            }
-            queueDeviceInputMemIdle[gpu]->enqueue(memInput);
-            queueDeviceOutputMemIdle[gpu]->enqueue(memOutput);
+
+            //////
+            // create OpenVX context
+            vx_status status;
+            openvx_context[gpu] = vxCreateContext();
+            if((status = vxGetStatus((vx_reference)openvx_context[gpu])) != VX_SUCCESS)
+                fatal("InferenceEngine: vxCreateContext(#%d) failed (%d)", gpu, status);
+            if((status = vxSetContextAttribute(openvx_context[gpu], VX_CONTEXT_ATTRIBUTE_AMD_OPENCL_CONTEXT,
+                                              &opencl_context[gpu], sizeof(cl_context))) != VX_SUCCESS)
+                fatal("InferenceEngine: vxSetContextAttribute(#%d,VX_CONTEXT_ATTRIBUTE_AMD_OPENCL_CONTEXT) failed (%d)", gpu, status);
+            vx_size idim[4] = { (vx_size)dimInput[0], (vx_size)dimInput[1], (vx_size)dimInput[2], (vx_size)batchSize };
+            vx_size odim[4] = { (vx_size)dimOutput[0], (vx_size)dimOutput[1], (vx_size)dimOutput[2], (vx_size)batchSize };
+            vx_size istride[4] = { 4, (vx_size)4 * dimInput[0], (vx_size)4 * dimInput[0] * dimInput[1], (vx_size)4 * dimInput[0] * dimInput[1] * dimInput[2] };
+            vx_size ostride[4] = { 4, (vx_size)4 * dimOutput[0], (vx_size)4 * dimOutput[0] * dimOutput[1], (vx_size)4 * dimOutput[0] * dimOutput[1] * dimOutput[2] };
+            openvx_input[gpu] = vxCreateTensorFromHandle(openvx_context[gpu], 4, idim, VX_TYPE_FLOAT32, 0, istride, memInput, VX_MEMORY_TYPE_OPENCL);
+            openvx_output[gpu] = vxCreateTensorFromHandle(openvx_context[gpu], 4, odim, VX_TYPE_FLOAT32, 0, ostride, memOutput, VX_MEMORY_TYPE_OPENCL);
+            if((status = vxGetStatus((vx_reference)openvx_input[gpu])) != VX_SUCCESS)
+                fatal("InferenceEngine: vxCreateTensorFromHandle(input#%d) failed (%d)", gpu, status);
+            if((status = vxGetStatus((vx_reference)openvx_output[gpu])) != VX_SUCCESS)
+                fatal("InferenceEngine: vxCreateTensorFromHandle(output#%d) failed (%d)", gpu, status);
+
+            //////
+            // load the model
+            openvx_graph[gpu] = annCreateGraph(openvx_context[gpu], openvx_input[gpu], openvx_output[gpu], modelPath.c_str());
+            if((status = vxGetStatus((vx_reference)openvx_graph[gpu])) != VX_SUCCESS)
+                fatal("InferenceEngine: annCreateGraph(#%d) failed (%d)", gpu, status);
         }
-
-        //////
-        // create OpenVX context
-        vx_status status;
-        openvx_context[gpu] = vxCreateContext();
-        if((status = vxGetStatus((vx_reference)openvx_context[gpu])) != VX_SUCCESS)
-            fatal("InferenceEngine: vxCreateContext(#%d) failed (%d)", gpu, status);
-        if((status = vxSetContextAttribute(openvx_context[gpu], VX_CONTEXT_ATTRIBUTE_AMD_OPENCL_CONTEXT,
-                                          &opencl_context[gpu], sizeof(cl_context))) != VX_SUCCESS)
-            fatal("InferenceEngine: vxSetContextAttribute(#%d,VX_CONTEXT_ATTRIBUTE_AMD_OPENCL_CONTEXT) failed (%d)", gpu, status);
-        vx_size idim[4] = { (vx_size)dimInput[0], (vx_size)dimInput[1], (vx_size)dimInput[2], (vx_size)batchSize };
-        vx_size odim[4] = { (vx_size)dimOutput[0], (vx_size)dimOutput[1], (vx_size)dimOutput[2], (vx_size)batchSize };
-        vx_size istride[4] = { 4, (vx_size)4 * dimInput[0], (vx_size)4 * dimInput[0] * dimInput[1], (vx_size)4 * dimInput[0] * dimInput[1] * dimInput[2] };
-        vx_size ostride[4] = { 4, (vx_size)4 * dimOutput[0], (vx_size)4 * dimOutput[0] * dimOutput[1], (vx_size)4 * dimOutput[0] * dimOutput[1] * dimOutput[2] };
-        openvx_input[gpu] = vxCreateTensorFromHandle(openvx_context[gpu], 4, idim, VX_TYPE_FLOAT32, 0, istride, memInput, VX_MEMORY_TYPE_OPENCL);
-        openvx_output[gpu] = vxCreateTensorFromHandle(openvx_context[gpu], 4, odim, VX_TYPE_FLOAT32, 0, ostride, memOutput, VX_MEMORY_TYPE_OPENCL);
-        if((status = vxGetStatus((vx_reference)openvx_input[gpu])) != VX_SUCCESS)
-            fatal("InferenceEngine: vxCreateTensorFromHandle(input#%d) failed (%d)", gpu, status);
-        if((status = vxGetStatus((vx_reference)openvx_output[gpu])) != VX_SUCCESS)
-            fatal("InferenceEngine: vxCreateTensorFromHandle(output#%d) failed (%d)", gpu, status);
-
-        //////
-        // load the model
-        openvx_graph[gpu] = annCreateGraph(openvx_context[gpu], openvx_input[gpu], openvx_output[gpu], modelPath.c_str());
-        if((status = vxGetStatus((vx_reference)openvx_graph[gpu])) != VX_SUCCESS)
-            fatal("InferenceEngine: annCreateGraph(#%d) failed (%d)", gpu, status);
-
+#if SIMULATE_VIRTUAL_GPUS
+        else
+        {
+            for(int i = 0; i < INFERENCE_PIPE_QUEUE_DEPTH; i++) {
+                queueDeviceInputMemIdle[gpu]->enqueue((cl_mem)VIRTUAL_GPUMEM_MAGIC_CODE);
+                queueDeviceOutputMemIdle[gpu]->enqueue((cl_mem)VIRTUAL_GPUMEM_MAGIC_CODE);
+            }
+        }
+#endif
         // send and wait for INFCOM_CMD_INFERENCE_INITIALIZATION message
         updateCmd.data[0] = 80 * (gpu + 1) / GPUs;
         sprintf(updateCmd.message, "completed OpenVX graph for GPU#%d", gpu);
@@ -682,7 +703,7 @@ int InferenceEngine::run()
     // nothing to do
 #elif INFERENCE_SCHEDULER_MODE == LIBRE_INFERENCE_SCHEDULER
     threadMasterInputQ = new std::thread(&InferenceEngine::workMasterInputQ, this);
-    for(int gpu = 0; gpu < GPUs; gpu++) {
+    for(int gpu = 0; gpu < (GPUs+virtualGPUs); gpu++) {
         threadDeviceInputCopy[gpu] = new std::thread(&InferenceEngine::workDeviceInputCopy, this, gpu);
         threadDeviceProcess[gpu] = new std::thread(&InferenceEngine::workDeviceProcess, this, gpu);
         threadDeviceOutputCopy[gpu] = new std::thread(&InferenceEngine::workDeviceOutputCopy, this, gpu);
@@ -871,17 +892,16 @@ int InferenceEngine::run()
                 int i = 0;
                 for(; i < imageCountReceived; i++) {
                     // get header with tag and size info
-                    int header[3] = { 0, 0, 0 };
+                    int header[2] = { 0, 0};
                     ERRCHK(recvBuffer(sock, &header, sizeof(header), clientName));
                     int tag = header[0];
                     int size = header[1];
-                    int flags = header[2];
                     // do sanity check with unreasonable parameters
                     if(tag < 0 || size <= 0 || size > 50000000) {
                         return error_close(sock, "invalid (tag:%d,size:%d) from %s", tag, size, clientName.c_str());
                     }
                     char * byteStream = 0;
-                    if (receiveFileNames || (flags&1))
+                    if (receiveFileNames /*|| (flags&1)*/)
                     {
                         std::string fileNameDir = args->getlocalShadowRootDir() + "/";
                         char * buff = new char [size];
@@ -997,6 +1017,7 @@ void InferenceEngine::workMasterInputQ()
     args->lock();
     info("workMasterInputQ: started for %s", clientName.c_str());
     args->unlock();
+    int nTGPUs =  GPUs+virtualGPUs;
 
     int batchSize = args->getPriorityMode()? args->getPriorityBatchSize(): args->getBatchSize();
     int totalInputCount = 0;
@@ -1025,8 +1046,8 @@ void InferenceEngine::workMasterInputQ()
         inputCountInBatch++;
         if(inputCountInBatch == batchSize) {
             inputCountInBatch = 0;
-            gpu = (gpu + 1) % GPUs;
-            for(int i = 0; i < GPUs; i++) {
+            gpu = (gpu + 1) % nTGPUs;
+            for(int i = 0; i < nTGPUs; i++) {
                 if(i != gpu && queueDeviceTagQ[i]->size() < queueDeviceTagQ[gpu]->size()) {
                     gpu = i;
                 }
@@ -1035,7 +1056,7 @@ void InferenceEngine::workMasterInputQ()
     }
 
     // send endOfSequence indicator to all scheduler threads
-    for(int i = 0; i < GPUs; i++) {
+    for(int i = 0; i < nTGPUs; i++) {
         int endOfSequenceTag = -1;
         std::tuple<char*,int> endOfSequenceImage(nullptr,0);
         queueDeviceTagQ[i]->enqueue(endOfSequenceTag);
@@ -1051,18 +1072,19 @@ void InferenceEngine::workDeviceInputCopy(int gpu)
     args->lock();
     info("workDeviceInputCopy: GPU#%d started for %s", gpu, clientName.c_str());
     args->unlock();
-
-    // create OpenCL command-queue
     cl_command_queue cmdq;
     cl_int err;
-#if defined(CL_VERSION_2_0)
-    cl_queue_properties properties[] = { CL_QUEUE_PROPERTIES, 0, 0 };
-    cmdq = clCreateCommandQueueWithProperties(opencl_context[gpu], device_id[gpu], properties, &err);
-#else
-    cmdq = clCreateCommandQueue(opencl_context[gpu], device_id[gpu], 0, &err);
-#endif
-    if(err) {
-        fatal("workDeviceInputCopy: clCreateCommandQueue(device_id[%d]) failed (%d)", gpu, err);
+    if (gpu < GPUs) {
+        // create OpenCL command-queue
+    #if defined(CL_VERSION_2_0)
+        cl_queue_properties properties[] = { CL_QUEUE_PROPERTIES, 0, 0 };
+        cmdq = clCreateCommandQueueWithProperties(opencl_context[gpu], device_id[gpu], properties, &err);
+    #else
+        cmdq = clCreateCommandQueue(opencl_context[gpu], device_id[gpu], 0, &err);
+    #endif
+        if(err) {
+            fatal("workDeviceInputCopy: clCreateCommandQueue(device_id[%d]) failed (%d)", gpu, err);
+        }
     }
 #if (NUM_DECODER_THREADS > 1)
     int num_dec_threads = NUM_DECODER_THREADS;
@@ -1073,16 +1095,21 @@ void InferenceEngine::workDeviceInputCopy(int gpu)
     int totalBatchCounter = 0, totalImageCounter = 0;
     for(bool endOfSequenceReached = false; !endOfSequenceReached; ) {
         PROFILER_START(AnnInferenceServer, workDeviceInputCopyBatch);
-        // get an empty OpenCL buffer and lock the buffer for writing
+        float * mapped_ptr;
         cl_mem mem = nullptr;
         queueDeviceInputMemIdle[gpu]->dequeue(mem);
         if(mem == nullptr) {
             fatal("workDeviceInputCopy: unexpected nullptr in queueDeviceInputMemIdle[%d]", gpu);
         }
-        cl_int err;
-        float * mapped_ptr = (float *)clEnqueueMapBuffer(cmdq, mem, CL_TRUE, CL_MAP_WRITE_INVALIDATE_REGION, 0, inputSizeInBytes, 0, NULL, NULL, &err);
-        if(err) {
-            fatal("workDeviceInputCopy: clEnqueueMapBuffer(#%d) failed (%d)", gpu, err);
+        if (gpu < GPUs) {
+            // get an empty OpenCL buffer and lock the buffer for writing
+            cl_int err;
+            mapped_ptr = (float *)clEnqueueMapBuffer(cmdq, mem, CL_TRUE, CL_MAP_WRITE_INVALIDATE_REGION, 0, inputSizeInBytes, 0, NULL, NULL, &err);
+            if(err) {
+                fatal("workDeviceInputCopy: clEnqueueMapBuffer(#%d) failed (%d)", gpu, err);
+            }
+        }else {
+            mapped_ptr = (float *)new char[inputSizeInBytes];
         }
 
         // get next batch of inputs and convert them into tensor and release input byteStream
@@ -1148,31 +1175,42 @@ void InferenceEngine::workDeviceInputCopy(int gpu)
         }
         PROFILER_STOP(AnnInferenceServer, workDeviceInputCopyJpegDecode);
 #endif
-        // unlock the OpenCL buffer to perform the writing
-        err = clEnqueueUnmapMemObject(cmdq, mem, mapped_ptr, 0, NULL, NULL);
-        if(err) {
-            fatal("workDeviceInputCopy: clEnqueueMapBuffer(#%d) failed (%d)", gpu, err);
-        }
-        err = clFinish(cmdq);
-        if(err) {
-            fatal("workDeviceInputCopy: clFinish(#%d) failed (%d)", gpu, err);
-        }
+        if(gpu < GPUs) {
+            // unlock the OpenCL buffer to perform the writing
+            err = clEnqueueUnmapMemObject(cmdq, mem, mapped_ptr, 0, NULL, NULL);
+            if(err) {
+                fatal("workDeviceInputCopy: clEnqueueMapBuffer(#%d) failed (%d)", gpu, err);
+            }
+            err = clFinish(cmdq);
+            if(err) {
+                fatal("workDeviceInputCopy: clFinish(#%d) failed (%d)", gpu, err);
+            }
+            if(inputCount > 0) {
+                // add the input for processing
+                queueDeviceInputMemBusy[gpu]->enqueue(mem);
+                // update counters
+                totalBatchCounter++;
+                totalImageCounter += inputCount;
+            }
+            else {
+                // add the input back to idle queue
+                queueDeviceInputMemIdle[gpu]->enqueue(mem);
+            }
+        }else {
+            if(inputCount > 0) {
+                queueDeviceInputMemBusy[gpu]->enqueue(mem);
+                // update counters
+                totalBatchCounter++;
+                totalImageCounter += inputCount;
+            } else
+                queueDeviceInputMemIdle[gpu]->enqueue(mem);
 
-        if(inputCount > 0) {
-            // add the input for processing
-            queueDeviceInputMemBusy[gpu]->enqueue(mem);
-            // update counters
-            totalBatchCounter++;
-            totalImageCounter += inputCount;
-        }
-        else {
-            // add the input back to idle queue
-            queueDeviceInputMemIdle[gpu]->enqueue(mem);
+            if (mapped_ptr) delete[] mapped_ptr;
         }
         PROFILER_STOP(AnnInferenceServer, workDeviceInputCopyBatch);
     }
     // release OpenCL command queue
-    clReleaseCommandQueue(cmdq);
+   if(gpu < GPUs) clReleaseCommandQueue(cmdq);
 
     // add the endOfSequenceMarker to next stage
     cl_mem endOfSequenceMarker = nullptr;
@@ -1205,29 +1243,31 @@ void InferenceEngine::workDeviceProcess(int gpu)
         if(input == nullptr) {
             fatal("workDeviceProcess: unexpected nullptr in queueDeviceOutputMemIdle[%d]", gpu);
         }
-
-        // process the graph
-        vx_status status;
-        status = vxSwapTensorHandle(openvx_input[gpu], input, nullptr);
-        if(status != VX_SUCCESS) {
-            fatal("workDeviceProcess: vxSwapTensorHandle(input#%d) failed(%d)", gpu, status);
+        if (gpu < GPUs) {
+            // process the graph
+            vx_status status;
+            status = vxSwapTensorHandle(openvx_input[gpu], input, nullptr);
+            if(status != VX_SUCCESS) {
+                fatal("workDeviceProcess: vxSwapTensorHandle(input#%d) failed(%d)", gpu, status);
+            }
+            status = vxSwapTensorHandle(openvx_output[gpu], output, nullptr);
+            if(status != VX_SUCCESS) {
+                fatal("workDeviceProcess: vxSwapTensorHandle(output#%d) failed(%d)", gpu, status);
+            }
+            status = vxProcessGraph(openvx_graph[gpu]);
+            if(status != VX_SUCCESS) {
+                fatal("workDeviceProcess: vxProcessGraph(#%d) failed(%d)", gpu, status);
+            }
+            // add the input for idle queue and output to busy queue
+            queueDeviceInputMemIdle[gpu]->enqueue(input);
+            queueDeviceOutputMemBusy[gpu]->enqueue(output);
+        } else {
+            info("InferenceEngine:workDeviceProcess on virtual GPU:%d\n", gpu);
+            std::this_thread::sleep_for(std::chrono::milliseconds(SLEEP_TIME_IN_MILLISEC_FOR_VIRTUAL_GPU));  // simulate some work
+            // add the input for idle queue and output to busy queue
+            queueDeviceInputMemIdle[gpu]->enqueue(input);
+            queueDeviceOutputMemBusy[gpu]->enqueue(output);
         }
-        status = vxSwapTensorHandle(openvx_output[gpu], output, nullptr);
-        if(status != VX_SUCCESS) {
-            fatal("workDeviceProcess: vxSwapTensorHandle(output#%d) failed(%d)", gpu, status);
-        }
-#if !DONOT_RUN_INFERENCE
-        status = vxProcessGraph(openvx_graph[gpu]);
-        if(status != VX_SUCCESS) {
-            fatal("workDeviceProcess: vxProcessGraph(#%d) failed(%d)", gpu, status);
-        }
-#else
-        info("InferenceEngine:workDeviceProcess DONOT_RUN_INFERENCE mode");
-        std::this_thread::sleep_for(std::chrono::milliseconds(4));  // simulate some work
-#endif
-        // add the input for idle queue and output to busy queue
-        queueDeviceInputMemIdle[gpu]->enqueue(input);
-        queueDeviceOutputMemBusy[gpu]->enqueue(output);
         processCounter++;
         PROFILER_STOP(AnnInferenceServer, workDeviceProcess);
     }
@@ -1247,32 +1287,36 @@ void InferenceEngine::workDeviceOutputCopy(int gpu)
     info("workDeviceOutputCopy: GPU#%d started for %s", gpu, clientName.c_str());
     args->unlock();
 
-    // create OpenCL command-queue
     cl_command_queue cmdq;
     cl_int err;
-#if defined(CL_VERSION_2_0)
-    cl_queue_properties properties[] = { CL_QUEUE_PROPERTIES, 0, 0 };
-    cmdq = clCreateCommandQueueWithProperties(opencl_context[gpu], device_id[gpu], properties, &err);
-#else
-    cmdq = clCreateCommandQueue(opencl_context[gpu], device_id[gpu], 0, &err);
-#endif
-    if(err) {
-        fatal("workDeviceOutputCopy: clCreateCommandQueue(device_id[%d]) failed (%d)", gpu, err);
+    if (gpu < GPUs) {
+    // create OpenCL command-queue
+    #if defined(CL_VERSION_2_0)
+        cl_queue_properties properties[] = { CL_QUEUE_PROPERTIES, 0, 0 };
+        cmdq = clCreateCommandQueueWithProperties(opencl_context[gpu], device_id[gpu], properties, &err);
+    #else
+        cmdq = clCreateCommandQueue(opencl_context[gpu], device_id[gpu], 0, &err);
+    #endif
+        if(err) {
+            fatal("workDeviceOutputCopy: clCreateCommandQueue(device_id[%d]) failed (%d)", gpu, err);
+        }
     }
-
     int totalBatchCounter = 0, totalImageCounter = 0;
     for(bool endOfSequenceReached = false; !endOfSequenceReached; ) {
         PROFILER_START(AnnInferenceServer, workDeviceOutputCopy);
-        // get an output OpenCL buffer and lock the buffer for reading
+        float * mapped_ptr = nullptr;
         cl_mem mem = nullptr;
+        // get an output OpenCL buffer and lock the buffer for reading
         queueDeviceOutputMemBusy[gpu]->dequeue(mem);
         if(mem == nullptr) {
             break;
         }
-        cl_int err;
-        float * mapped_ptr = (float *)clEnqueueMapBuffer(cmdq, mem, CL_TRUE, CL_MAP_READ, 0, outputSizeInBytes, 0, NULL, NULL, &err);
-        if(err) {
-            fatal("workDeviceOutputCopy: clEnqueueMapBuffer(#%d) failed (%d)", gpu, err);
+        if (gpu < GPUs) {
+            cl_int err;
+            mapped_ptr = (float *)clEnqueueMapBuffer(cmdq, mem, CL_TRUE, CL_MAP_READ, 0, outputSizeInBytes, 0, NULL, NULL, &err);
+            if(err) {
+                fatal("workDeviceOutputCopy: clEnqueueMapBuffer(#%d) failed (%d)", gpu, err);
+            }
         }
 
         // get next batch of inputs
@@ -1285,69 +1329,72 @@ void InferenceEngine::workDeviceOutputCopy(int gpu)
                 endOfSequenceReached = true;
                 break;
             }
-
-            // decode, scale, and format convert into the OpenCL buffer
-            float * buf = mapped_ptr + dimOutput[0] * dimOutput[1] * dimOutput[2] * outputCount;
-            if (!detectBoundingBoxes)
-            {
-                if (topK < 1){
-                    int label = 0;
-                    float max_prob = buf[0];
-                    for(int c = 1; c < dimOutput[2]; c++) {
-                        float prob = buf[c];
-                        if(prob > max_prob) {
-                            label = c;
-                            max_prob = prob;
+            if(gpu < GPUs) {
+                // decode, scale, and format convert into the OpenCL buffer
+                float * buf = mapped_ptr + dimOutput[0] * dimOutput[1] * dimOutput[2] * outputCount;
+                if (!detectBoundingBoxes)
+                {
+                    if (topK < 1){
+                        int label = 0;
+                        float max_prob = buf[0];
+                        for(int c = 1; c < dimOutput[2]; c++) {
+                            float prob = buf[c];
+                            if(prob > max_prob) {
+                                label = c;
+                                max_prob = prob;
+                            }
                         }
+                        outputQ.enqueue(std::tuple<int,int>(tag,label));
+                    }else {
+                        std::vector<float>  prob_vec(buf, buf + dimOutput[2]);
+                        std::vector<size_t> idx(prob_vec.size());
+                        std::iota(idx.begin(), idx.end(), 0);
+                        sort_indexes(prob_vec, idx);            // sort indeces based on prob
+                        std::vector<unsigned int>    labels;
+                        outputQ.enqueue(std::tuple<int,int>(tag,idx[0]));
+                        int j=0;
+                        for (auto i: idx) {
+                            // make label which is index and prob
+                            int packed_label_prob = (i&0xFFFF)|(((unsigned int)((prob_vec[i]*0x7FFF)+0.5))<<16);   // convert prob to 16bit float and store in MSBs
+                            labels.push_back(packed_label_prob);
+                            if (++j >= topK) break;
+                        }
+                        outputQTopk.enqueue(labels);
                     }
-                    outputQ.enqueue(std::tuple<int,int>(tag,label));
-                }else {
-                    std::vector<float>  prob_vec(buf, buf + dimOutput[2]);
-                    std::vector<size_t> idx(prob_vec.size());
-                    std::iota(idx.begin(), idx.end(), 0);
-                    sort_indexes(prob_vec, idx);            // sort indeces based on prob
-                    std::vector<unsigned int>    labels;
-                    outputQ.enqueue(std::tuple<int,int>(tag,idx[0]));
-                    int j=0;
-                    for (auto i: idx) {
-                        // make label which is index and prob
-                        int packed_label_prob = (i&0xFFFF)|(((unsigned int)((prob_vec[i]*0x7FFF)+0.5))<<16);   // convert prob to 16bit float and store in MSBs
-                        labels.push_back(packed_label_prob);
-                        if (++j >= topK) break;
+                }else
+                {
+                    std::vector<ObjectBB> detected_objects;
+                    region->GetObjectDetections(buf, BB_biases, dimOutput[2], dimOutput[1], dimOutput[0], BOUNDING_BOX_NUMBER_OF_CLASSES, dimInput[0], dimInput[1], BOUNDING_BOX_CONFIDENCE_THRESHHOLD, BOUNDING_BOX_NMS_THRESHHOLD, 13, detected_objects);
+                    if (detected_objects.size() > 0) {
+                        // add it to outputQ
+                        outputQ.enqueue(std::tuple<int,int>(tag,detected_objects[0].label));
+                        // add detected objects with BB into BoundingBox Q
+                        OutputQBB.enqueue(detected_objects);
+                    } else
+                    {
+                        // add it to outputQ
+                        outputQ.enqueue(std::tuple<int,int>(tag,-1));
                     }
-                    outputQTopk.enqueue(labels);
                 }
             }else
-            {
-                std::vector<ObjectBB> detected_objects;
-                region->GetObjectDetections(buf, BB_biases, dimOutput[2], dimOutput[1], dimOutput[0], BOUNDING_BOX_NUMBER_OF_CLASSES, dimInput[0], dimInput[1], BOUNDING_BOX_CONFIDENCE_THRESHHOLD, BOUNDING_BOX_NMS_THRESHHOLD, 13, detected_objects);
-                if (detected_objects.size() > 0) {
-                    // add it to outputQ
-                    outputQ.enqueue(std::tuple<int,int>(tag,detected_objects[0].label));
-                    // add detected objects with BB into BoundingBox Q
-                    OutputQBB.enqueue(detected_objects);
-                } else
-                {
-                    // add it to outputQ
-                    outputQ.enqueue(std::tuple<int,int>(tag,-1));
-                }
+                outputQ.enqueue(std::tuple<int,int>(tag,-1));
+        }
+
+        if(gpu < GPUs) {
+            // unlock the OpenCL buffer to perform the writing
+            err = clEnqueueUnmapMemObject(cmdq, mem, mapped_ptr, 0, NULL, NULL);
+            if(err) {
+                fatal("workDeviceOutputCopy: clEnqueueMapBuffer(#%d) failed (%d)", gpu, err);
+            }
+            err = clFinish(cmdq);
+            if(err) {
+                fatal("workDeviceOutputCopy: clFinish(#%d) failed (%d)", gpu, err);
             }
         }
-
-        // unlock the OpenCL buffer to perform the writing
-        err = clEnqueueUnmapMemObject(cmdq, mem, mapped_ptr, 0, NULL, NULL);
-        if(err) {
-            fatal("workDeviceOutputCopy: clEnqueueMapBuffer(#%d) failed (%d)", gpu, err);
-        }
-        err = clFinish(cmdq);
-        if(err) {
-            fatal("workDeviceOutputCopy: clFinish(#%d) failed (%d)", gpu, err);
-        }
-
         // add the output back to idle queue
         queueDeviceOutputMemIdle[gpu]->enqueue(mem);
-        PROFILER_STOP(AnnInferenceServer, workDeviceOutputCopy);
 
+        PROFILER_STOP(AnnInferenceServer, workDeviceOutputCopy);
         // update counter
         if(outputCount > 0) {
             totalBatchCounter++;
@@ -1356,7 +1403,8 @@ void InferenceEngine::workDeviceOutputCopy(int gpu)
     }
 
     // release OpenCL command queue
-    clReleaseCommandQueue(cmdq);
+    if(gpu < GPUs)
+        clReleaseCommandQueue(cmdq);
 
     // send end of sequence marker to next stage
     outputQ.enqueue(std::tuple<int,int>(-1,-1));

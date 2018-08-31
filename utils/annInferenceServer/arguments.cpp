@@ -322,13 +322,23 @@ int Arguments::initializeConfig(int argc, char * argv[])
     return 0;
 }
 
-int Arguments::lockGpuDevices(int GPUs, cl_device_id * device_id_)
+int Arguments::lockGpuDevices(int GPUs, cl_device_id * device_id_, int virtualGPUs)
 {
     std::lock_guard<std::mutex> lock(mutex);
 
+ #if SIMULATE_VIRTUAL_GPUS
+    if(GPUs > numGPUs) {
+        virtualGPUs = GPUs -numGPUs;
+        GPUs = numGPUs;
+    }
+#else
+    virtualGPUs = 0;
     // make sure number of devices are available
     if(GPUs > numGPUs)
         return -1;
+#endif
+
+
     int deviceAvail = 0;
     for(int i = 0; i < num_devices; i++) {
         if((deviceUseCount[i] < MAX_DEVICE_USE_LIMIT) || (priorityMode && (deviceUseCount[i] < MAX_DEVICE_USE_LIMIT_PRIORITY)))
@@ -347,7 +357,12 @@ int Arguments::lockGpuDevices(int GPUs, cl_device_id * device_id_)
         deviceUseCount[gpuId]++;
         device_id_[i] = device_id[gpuId];
     }
-
+#if SIMULATE_VIRTUAL_GPUS
+    for(int i = GPUs; i < numGPUs; i++) {
+        device_id_[i] = (cl_device_id)-1;
+        deviceUseCount[i] = 0;
+    }
+#endif
     return 0;
 }
 

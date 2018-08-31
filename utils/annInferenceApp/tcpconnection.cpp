@@ -128,7 +128,8 @@ bool TcpConnection::sendImage(int tag, QByteArray& byteArray, int& errorCode, QS
 {
     const char * buf = byteArray.constData();
     int len = byteArray.size();
-    int header[3] = { tag, len, flags };
+    //int header[3] = { tag, len, flags };
+    int header[2] = { tag, len};
     if(send((const char *)&header[0], sizeof(header)) < 0) {
         errorCode = -1;
         message.sprintf("ERROR: sendImage: write(header:%ld) - tag:%d", sizeof(header), tag);

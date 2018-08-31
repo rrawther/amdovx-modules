@@ -13,6 +13,8 @@
 
 #define MAX_DEVICE_USE_LIMIT            1   // number of parallel sessions allowed per device
 #define MAX_DEVICE_USE_LIMIT_PRIORITY   2   // allow an extra use per device for priority
+#define SIMULATE_VIRTUAL_GPUS           0
+
 
 class Arguments {
 public:
@@ -114,7 +116,7 @@ public:
     }
 
     // device resources
-    int lockGpuDevices(int GPUs, cl_device_id * device_id_);
+    int lockGpuDevices(int GPUs, cl_device_id * device_id_, int virtualGPUs=0);
     void releaseGpuDevices(int GPUs, const cl_device_id * device_id_);
 
 protected:

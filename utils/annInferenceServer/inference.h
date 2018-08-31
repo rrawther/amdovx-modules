@@ -45,6 +45,10 @@
 #define BOUNDING_BOX_CONFIDENCE_THRESHHOLD  0.2
 #define BOUNDING_BOX_NMS_THRESHHOLD         0.4
 #define BOUNDING_BOX_NUMBER_OF_CLASSES      20
+#define SIMULATE_VIRTUAL_GPUS                   0
+#define SLEEP_TIME_IN_MILLISEC_FOR_VIRTUAL_GPU  8
+#define VIRTUAL_GPUMEM_MAGIC_CODE            0xC001C0FE // magic code to represent virtual gpu mem (won't be used)
+
 
 
 extern "C" {
@@ -207,6 +211,7 @@ private:
     std::string modelName;
     std::string options;
     int GPUs;
+    int virtualGPUs;
     int dimInput[3];
     int dimOutput[3];
     bool useShadowFilenames;
