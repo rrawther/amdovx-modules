@@ -20,7 +20,8 @@ caffe2ir_op_type = {
     'Eltwise' : 'sum',
     'Concat' : 'concat',
     'Softmax' : 'softmax',
-    'SoftmaxWithLoss' : 'softmax'
+    'SoftmaxWithLoss' : 'softmax',
+    'Interp' : 'upsample'
 }
 
 # convert caffename to ir names.
@@ -56,6 +57,8 @@ def caffe_attr_to_ir_attr(attribute_map):
                 attr.set(attr_names[i], [int(v) for v in (attributeInfo)])
             elif (type(attributeInfo[0]) is float):
                 attr.set(attr_names[i], [float(v) for v in (attributeInfo)])
+            elif (type(attributeInfo[0]) is long):
+                attr.set(attr_names[i], [long(v) for v in (attributeInfo)])
             else:
                 print ("ERROR: unsupported list attribute")
                 sys.exit(1)
@@ -175,6 +178,7 @@ def extractOutput(graph, inputOutputLayers, verbose):
 
 
 # extract layer attribute information from caffe layers.
+# layer_param is layer
 def extractCaffeAttrInfo(layer_param):
     layer_type = layer_param.type
     attribute_map = {}
@@ -240,7 +244,15 @@ def extractCaffeAttrInfo(layer_param):
         relu = layer_param.relu_param
         slope = relu.negative_slope
         attribute_map["alpha"] = slope
-            
+    elif (layer_type == "Interp"):
+        if layer_param.python_param.param_str != '':
+            python_param_str = eval(layer_param.python_param.param_str)
+            #print("zoom_factor: %d" % int(python_param_str["zoom_factor"]))
+            zoom_factor = int(python_param_str["zoom_factor"])
+        else:
+            zoom_factor = 2  #default value
+        attribute_map["zoom_factor"] = zoom_factor
+
     return attribute_map
 
 # calculate dimensions of the output of each layer.
@@ -336,6 +348,19 @@ def calculateTensorDims(layer_param, input_map, attribute_map):
         output_dims[0] = n
         output_dims[2] = h
         output_dims[3] = w
+
+    elif (layer_param.type == "Interp"):
+        inputs = input_map.keys()
+        zoom_factor = attribute_map["zoom_factor"]
+        for i in range(len(inputs)):
+            n,c,h,w = input_map[inputs[i]]
+        n,c,h,w = input_map[inputs[0]]
+        output_dims[0] = n
+        output_dims[1] = c
+        output_dims[2] = h*zoom_factor
+        output_dims[3] = w*zoom_factor
+        print('INFO: Found Layertype Interp with zoom '+ str(zoom_factor))
+
     elif (layer_param.type == "BatchNorm" or layer_param.type == "Scale"):
         output_dims[0], output_dims[1], output_dims[2], output_dims[3] = input_map[str(inputs[0])]
         if (len(layer_param.blobs) > 0):
