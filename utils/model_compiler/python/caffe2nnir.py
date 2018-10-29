@@ -429,46 +429,57 @@ def extractCaffeNodeInfo(net_parameter, graph, inputsInfo, verbose):
         #fusing scale layer to batchnorm layer.
         #adding scale weights and biases into the batchnorm, else fusing scale to mul or muladd operator.
         elif layer_type == "Scale":
+            scale_fused = 0
+            if (verbose):
+                print ("Info: Found scale layer  " + str(layer_name))
             if (count > 0 and (count < len(layers))):
-                prev_layer_info = inputOutputMap[count-1]
-                prev_layer_type = prev_layer_info["layer_type"]
-                if (prev_layer_type == "batch_norm"):
-                    modified_out_info_map = {}
-                    scale_weights_map = {}
-                    scale_bias_map = {}
-                    extractBinary(layer_param, graph, verbose)
-                    prev_input_map = prev_layer_info["inputs"]
-                    prev_attribute_map = prev_layer_info["attributes"]
-                    dimList = calculateTensorDims(layer_param, prev_input_map, prev_attribute_map)
-                    modified_out_info_map[layer_name] = dimList["output"]
-                    outputsMap.update(modified_out_info_map)
-                    prev_layer_info["outputs"] = modified_out_info_map
-                    if ("weights" in dimList):
-                        scale_weights = layer_name + "_w"
-                        scale_weights_map[scale_weights] = dimList["weights"]
-                        prev_layer_info["scale_weights"] = scale_weights_map
-                        graph.addVariable(caffe_blob_to_ir_tensor(scale_weights, "F032", dimList["weights"]))
-                    if ("bias" in dimList):
-                        scale_bias = layer_name + "_b"
-                        scale_bias_map[scale_bias] = dimList["bias"]
-                        prev_layer_info["scale_bias"] = scale_bias_map
-                        graph.addVariable(caffe_blob_to_ir_tensor(scale_bias, "F032", dimList["bias"]))
-                    if(layer_name != caffe_name_to_ir_name(str(outputs[0]))):
-                        outputNameAliasMap[caffe_name_to_ir_name(str(outputs[0]))] = layer_name
-                    prev_layer_info["layer_name"] = layer_name
-                    inputOutputMap[count - 1] = prev_layer_info
-                    if (verbose):
-                        print (prev_layer_info)
-                    node = caffe_node_to_ir_node(prev_layer_info["layer_type"], prev_layer_info)
-                    graph.addNode(node)
-                    if (verbose):
-                        print ("OK: fusing scale to batch_norm")
-                    continue
-                else:
+                in_name = caffe_name_to_ir_name(str(inputs[0]))
+                for j in range(count-1, 0, -1):
+                    prev_layer_info = inputOutputMap[j]
+                    prev_layer_type = prev_layer_info["layer_type"]
+                    prev_output_map = prev_layer_info["outputs"]
+                    #if layer_name == "Scale195":
+                     #   print("prev_type " + str(prev_layer_type) + " " + str(in_name) + " " + str(prev_output_map))
+                    if (prev_layer_type == "batch_norm" and in_name in prev_output_map):
+                        modified_out_info_map = {}
+                        scale_weights_map = {}
+                        scale_bias_map = {}
+                        extractBinary(layer_param, graph, verbose)
+                        prev_input_map = prev_layer_info["inputs"]
+                        prev_attribute_map = prev_layer_info["attributes"]
+                        dimList = calculateTensorDims(layer_param, prev_input_map, prev_attribute_map)
+                        modified_out_info_map[layer_name] = dimList["output"]
+                        outputsMap.update(modified_out_info_map)
+                        prev_layer_info["outputs"] = modified_out_info_map
+                        if ("weights" in dimList):
+                            scale_weights = layer_name + "_w"
+                            scale_weights_map[scale_weights] = dimList["weights"]
+                            prev_layer_info["scale_weights"] = scale_weights_map
+                            graph.addVariable(caffe_blob_to_ir_tensor(scale_weights, "F032", dimList["weights"]))
+                        if ("bias" in dimList):
+                            scale_bias = layer_name + "_b"
+                            scale_bias_map[scale_bias] = dimList["bias"]
+                            prev_layer_info["scale_bias"] = scale_bias_map
+                            graph.addVariable(caffe_blob_to_ir_tensor(scale_bias, "F032", dimList["bias"]))
+                        if(layer_name != caffe_name_to_ir_name(str(outputs[0]))):
+                            outputNameAliasMap[caffe_name_to_ir_name(str(outputs[0]))] = layer_name
+                        prev_layer_name = prev_layer_info["layer_name"]
+                        prev_layer_info["layer_name"] = layer_name
+                        inputOutputMap[j] = prev_layer_info
+                        if (verbose):
+                            print (prev_layer_info)
+                        node = caffe_node_to_ir_node(prev_layer_info["layer_type"], prev_layer_info)
+                        graph.addNode(node)
+                        if (verbose):
+                            print ("OK: fusing scale" + str(layer_name) + "to batch_norm" + str(prev_layer_name))
+                        scale_fused = 1
+                        break
+                if scale_fused == 0:
                     scale_layer_type = 'mul' if len(layer_param.blobs) == 1 else 'muladd'
                     if (verbose):
                         print ("OK: Fusing scale to : " + scale_layer_type)
                     layer_info_map["layer_type"] = scale_layer_type
+                continue
         else:
             print ("ERROR: caffe operation %s is not supported yet." % (layer_type))
             sys.exit(1)
@@ -561,10 +572,13 @@ def extractCaffeNodeInfo(net_parameter, graph, inputsInfo, verbose):
         inputOutputMap[count] = layer_info_map
         count += 1
 
-        if(layer_info_map["layer_type"] == "batch_norm" and (i < len(layers) - 1)):
-            next_layer_param = layers[i+1]
-            if(next_layer_param.type == "Scale"):
-                continue
+        if(layer_type == "BatchNorm" and (i < len(layers) - 1)):
+            for j in range(i+1, len(layers)-1):
+                next_layer_param = layers[j]
+                if(next_layer_param.type == "Scale" and str(next_layer_param.bottom[0]) ==  str(outputs[0])):
+                    #scaleLayerInputMap[caffe_name_to_ir_name(str(next_layer_param.name))] = caffe_name_to_ir_name(str(outputs[0]))
+                    break
+            continue
 
         if (verbose):
             print (layer_info_map)
