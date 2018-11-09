@@ -447,6 +447,7 @@ class IrGraph:
                 self.tensor_dict[tensor.name] = tensor
             for idx, binary in enumerate(self.binaries):
                 weight = np.frombuffer(self.binaries[binary], dtype=np.float32)
+                #todo:: do not change the binaries for batchnorm
                 self.addBinary(binary, np.getbuffer(weight.astype(np.float16)))
                 #print("Add binary %s of size %d at Idx: %d len: %d" %(binary, len(self.binaries[binary]), idx, len(self.binaries)))
             self.all_F032 = False

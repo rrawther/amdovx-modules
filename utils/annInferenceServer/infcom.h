@@ -57,6 +57,8 @@
 //    client: (repeat of INFCOM_CMD_SEND_IMAGES and INFCOM_CMD_INFERENCE_RESULT messages)
 //  * server: InfComCommand:INFCOM_CMD_DONE
 //    client: InfComCommand:INFCOM_CMD_DONE
+//  * server: InfComCommand:INFCOM_CMD_INFERENCE_LOAD_CONTROL with data={max_cpu_threads, max_gpu_threads}
+//    client: InfComCommand:INFCOM_CMD_INFERENCE_LOAD_CONTROL with data={cpu_thread_count_per_gpu,CPU_MASK, GPUs,GPU_MASK)
 //    client: (disconnect)
 
 // shadow protocol
@@ -96,6 +98,7 @@
 #define INFCOM_CMD_INFERENCE_RESULT            303
 #define INFCOM_CMD_TOPK_INFERENCE_RESULT       304
 #define INFCOM_CMD_BB_INFERENCE_RESULT         305
+#define INFCOM_CMD_INFERENCE_LOAD_CONTROL      306
 #define INFCOM_CMD_SHADOW_SEND_FOLDERNAMES     401
 #define INFCOM_CMD_SHADOW_CREATE_FOLDER        402
 #define INFCOM_CMD_SHADOW_SEND_FILES           403

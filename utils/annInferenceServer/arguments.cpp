@@ -71,6 +71,9 @@ Arguments::Arguments()
         gpuIdList[gpuId] = gpuId;
     }
 
+    // find the number of CPU cores available in the system
+    int numCpuCores = sysconf(_SC_NPROCESSORS_ONLN);
+    if (numCpuCores < 1) numCpuCores = 1;  // atleast 1
     ////////
     /// \brief load default configuration
     ///
@@ -116,10 +119,10 @@ void Arguments::loadConfig()
         bool valid = false;
         char version[256], workFolder_[256];
         int modelFileDownloadCounter_;
-        int port_, batchSize_, maxPendingBatches_;
+        int port_, batchSize_, maxPendingBatches_, numCpuCores_;
         int numGPUs_, gpuIdList_[MAX_NUM_GPU] = { 0 }, maxGpuId_;
         char password_[256] = { 0 };
-        int n = fscanf(fp, "%s%s%d%d%d%d%d", version, workFolder_, &modelFileDownloadCounter_, &port_, &batchSize_, &maxPendingBatches_, &numGPUs_);
+        int n = fscanf(fp, "%s%s%d%d%d%d%d%d", version, workFolder_, &modelFileDownloadCounter_, &port_, &batchSize_, &maxPendingBatches_, &numCpuCores_, &numGPUs_);
         if(n == 7 && !strcmp(version, BUILD_VERSION)) {
             if(numGPUs_ > num_devices) {
                 warning("reseting GPUs to default as numGPUs(%d) exceeded num_devices(%d) in %s", numGPUs_, num_devices, configurationFile.c_str());
@@ -150,6 +153,7 @@ void Arguments::loadConfig()
             port = port_;
             batchSize = batchSize_;
             maxPendingBatches = maxPendingBatches_;
+            numCpuCores = numCpuCores_;
             numGPUs = numGPUs_;
             for(int i = 0; i < numGPUs; i++) {
                 gpuIdList[i] = gpuIdList_[i];
@@ -175,6 +179,7 @@ void Arguments::saveConfig()
         fprintf(fp, "%d\n", port);
         fprintf(fp, "%d\n", batchSize);
         fprintf(fp, "%d\n", maxPendingBatches);
+        fprintf(fp, "%d\n", numCpuCores);
         fprintf(fp, "%d", numGPUs);
         for(int i = 0; i < numGPUs; i++) {
             fprintf(fp, " %d", gpuIdList[i]);

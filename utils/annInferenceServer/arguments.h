@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <cl.h>
+#include <unistd.h>
 
 #define MAX_DEVICE_USE_LIMIT     1   // number of parallel sessions allowed per device
 
@@ -115,6 +116,11 @@ public:
         return numDecThreads;
     }
 
+    void setDecThreads(int nThreads)
+    {
+        numDecThreads = nThreads;
+    }
+
     // device resources
     int lockGpuDevices(int GPUs, cl_device_id * device_id_);
     void releaseGpuDevices(int GPUs, const cl_device_id * device_id_);
@@ -135,6 +141,7 @@ private:
     int numGPUs;
     int useFp16Inference;
     int numDecThreads;
+    int numCpuCores;
     int gpuIdList[MAX_NUM_GPU];
     std::string password;
     // derived configuration

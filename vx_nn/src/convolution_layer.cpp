@@ -136,9 +136,10 @@ static vx_status VX_CALLBACK processConvolutionLayer(vx_node node, const vx_refe
     if (data->fusion_possible == true)
     {
         // Set the Args
+        if (data->biasOp) miopenSetOpArgsBiasForward(data->fusionArgs, data->biasOp, &data->bias_alpha, &data->bias_beta, data->bias_mem);
+        if (data->activOp) miopenSetOpArgsActivForward(data->fusionArgs, data->activOp, &data->conv_alpha, &data->conv_beta, data->activation_alpha, data->activation_beta, data->activation_power);
         ERROR_CHECK_MIOPEN_STATUS(miopenExecuteFusionPlan(data->handle->miopen_handle, data->fusePlanDesc, data->input_desc, data->input_mem, data->output_desc, data->output_mem, data->fusionArgs));
         //ERROR_CHECK_STATUS(clFinish(data->handle->cmdq));       // this is required to fix the sync issue in fusion
-
     }else
     {
         //ConvolutionForward.
@@ -214,7 +215,7 @@ static vx_status VX_CALLBACK initializeConvolutionLayer(vx_node node, const vx_r
     stride_h = (output_dims[1] > 1) ? ((input_dims[1] + 2 * pad_h - kernel_h - (kernel_h - 1) * (dilation_h - 1) + ((output_dims[1] - 1) / 2)) / (output_dims[1] - 1)) : 1;
 
     data->bias_activ_mode = NONE;
-    data->fusion_possible = nn_cbr_mode && (stride_w == 1) && (stride_h == 1) && (dilation_w == 1) && (dilation_h == 1) && (pad_w <=1) && (pad_h <=1);   // MIOpen only support stride 1 for fusion
+    data->fusion_possible = nn_cbr_mode && (stride_w <= 2) && (stride_h <= 2) && (dilation_w == 1) && (dilation_h == 1) && (pad_w <=2) && (pad_h <=2);   // MIOpen only support stride 1 for fusion
     data->fusion_possible &= (kernel_h > 1) && (kernel_w > 1);
     if (parameters[2]) {
         data->bias_activ_mode = data->fusion_possible? BIAS_ONLY_FUSED : BIAS_ONLY_SEPERATE;
@@ -267,7 +268,7 @@ static vx_status VX_CALLBACK initializeConvolutionLayer(vx_node node, const vx_r
         if (data->bias_activ_mode == BIAS_ONLY_FUSED || data->bias_activ_mode == BIAS_ACTIVATION_FUSED)
         {
             ERROR_CHECK_MIOPEN_STATUS(miopenCreateOpBiasForward(data->fusePlanDesc, &data->biasOp, data->bias_desc));        // add bias to fusion plan
-            miopenSetOpArgsBiasForward(data->fusionArgs, data->biasOp, &data->bias_alpha, &data->bias_beta, data->bias_mem);
+            //miopenSetOpArgsBiasForward(data->fusionArgs, data->biasOp, &data->bias_alpha, &data->bias_beta, data->bias_mem);
         }
         if (data->bias_activ_mode == ACTIVATION_ONLY_FUSED || data->bias_activ_mode == BIAS_ACTIVATION_FUSED) {
             if (data->leaky_alpha == 0.0) {
@@ -279,7 +280,7 @@ static vx_status VX_CALLBACK initializeConvolutionLayer(vx_node node, const vx_r
             data->activation_alpha = 1.0;
             data->activation_beta = data->leaky_alpha;
             data->activation_power = 1.0;
-            miopenSetOpArgsActivForward(data->fusionArgs, data->activOp, &data->conv_alpha, &data->conv_beta, data->activation_alpha, data->activation_beta, data->activation_power);
+            //miopenSetOpArgsActivForward(data->fusionArgs, data->activOp, &data->conv_alpha, &data->conv_beta, data->activation_alpha, data->activation_beta, data->activation_power);
         }
 
         // compile fusion plan
@@ -318,12 +319,16 @@ static vx_status VX_CALLBACK initializeConvolutionLayer(vx_node node, const vx_r
             if (!data->workspace) {
                 return VX_FAILURE;
             }
-            cl_float pattern = 0;
+
             cl_int err;
-            if (data->data_type == miopenFloat)
+            if (data->data_type == miopenFloat){
+                cl_float pattern = 0;
                 err = clEnqueueFillBuffer(data->handle->cmdq, data->workspace, &pattern, sizeof(cl_float), 0, data->workspace_size, 0, NULL, NULL);
-            else
+            }
+            else {
+                cl_half pattern = 0;
                 err = clEnqueueFillBuffer(data->handle->cmdq, data->workspace, &pattern, sizeof(cl_half), 0, data->workspace_size, 0, NULL, NULL);
+            }
             if(err) return VX_FAILURE;
         }
         //Finding best Convolution Algorithm.
@@ -358,13 +363,13 @@ static vx_status VX_CALLBACK uninitializeConvolutionLayer(vx_node node, const vx
 {
     ConvolutionLayerLocalData * data = NULL;
     ERROR_CHECK_STATUS(vxQueryNode(node, VX_NODE_LOCAL_DATA_PTR, &data, sizeof(data)));
-    if(data->workspace && clReleaseMemObject(data->workspace) != 0) return VX_FAILURE;
     if (data->fusePlanDesc) miopenDestroyFusionPlan(data->fusePlanDesc);
     if (data->fusionArgs) miopenDestroyOperatorArgs(data->fusionArgs);
     ERROR_CHECK_MIOPEN_STATUS(miopenDestroyConvolutionDescriptor(data->conv_desc));
     if (data->activation_desc) {
         ERROR_CHECK_MIOPEN_STATUS(miopenDestroyActivationDescriptor(data->activation_desc));
     }
+    if(data->workspace && clReleaseMemObject(data->workspace) != 0) return VX_FAILURE;
     ERROR_CHECK_MIOPEN_STATUS(miopenDestroyTensorDescriptor(data->input_desc));
     ERROR_CHECK_MIOPEN_STATUS(miopenDestroyTensorDescriptor(data->output_desc));
     ERROR_CHECK_MIOPEN_STATUS(miopenDestroyTensorDescriptor(data->weight_desc));

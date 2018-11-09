@@ -38,6 +38,7 @@
 #define USE_SSE_OPTIMIZATION           1  // enable/disable SSE intrinsics for resize and format conversion
 #define DONOT_RUN_INFERENCE            0  // for debugging
 #define USE_ADVANCED_MESSAGE_Q         0  // experimental code
+#define USE_INFERENCE_LOAD_CONTROL     0
 #endif
 
 // Bounding box region:: todo add this as parameters to app and pass it to server
