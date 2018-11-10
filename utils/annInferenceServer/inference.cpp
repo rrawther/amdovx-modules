@@ -847,8 +847,37 @@ int InferenceEngine::run()
     /// \brief keep running the inference in loop
     ///
     bool endOfImageRequested = false;
+    int loadControlCnt = 0;
+    int numThreadsReq = numDecThreads;
+    int numGpusReq = GPUs;
+    int gpuMask = -1;
     for(bool endOfSequence = false; !endOfSequence; ) {
         bool didSomething = false;
+
+#if USE_INFERENCE_LOAD_CONTROL      // do this every now and then (at fixed intervals
+        if (loadControlCnt >= 255) {
+            //check server for dynamic parameters
+            InfComCommand inference_info = {
+                INFCOM_MAGIC, INFCOM_CMD_INFERENCE_LOAD_CONTROL,
+                { args->getNumCPUs(), 0, args->getNumGPUs()},
+                { 0 }
+            };
+
+            ERRCHK(sendCommand(sock, inference_info, clientName));
+            ERRCHK(recvCommand(sock, inference_info, clientName, INFCOM_CMD_INFERENCE_LOAD_CONTROL));
+            // get number of threads requested by client for each gpu
+            numThreadsReq = inference_info.data[0];
+            numGpusReq = inference_info.data[2];
+            gpuMask = inference_info.data[3];
+            printf("Received load control info NumCpuThreads: %d numGpusReq: %d gpuMask:%d\n", numThreadsReq,numGpusReq, gpuMask);
+            if (numThreadsReq != numThreadsReq){
+                args->lock();
+                args->setDecThreads(numThreadsReq);
+                args->unlock();
+            }
+            loadControlCnt = 0;
+        }
+#endif
 
         // send all the available results to the client
         int resultCountAvailable = outputQ.size();
@@ -1017,6 +1046,7 @@ int InferenceEngine::run()
                 }
                 int i = 0;
                 for(; i < imageCountReceived; i++) {
+                    loadControlCnt++;
                     // get header with tag and size info
                     int header[2] = { 0, 0 };
                     ERRCHK(recvBuffer(sock, &header, sizeof(header), clientName));
@@ -1147,9 +1177,6 @@ void InferenceEngine::workMasterInputQ()
     int batchSize = args->getBatchSize();
     int totalInputCount = 0;
     int inputCountInBatch = 0, gpu = 0;
-    int numThreadsReq = numDecThreads;
-    int numGpusReq = GPUs;
-    int gpuMask = 0xFFFFFFFF;
     for(;;) {
         PROFILER_START(AnnInferenceServer, workMasterInputQ);
          // get next item from the input queue
@@ -1173,28 +1200,9 @@ void InferenceEngine::workMasterInputQ()
         // at the end of Batch pick another device
         inputCountInBatch++;
         if(inputCountInBatch == batchSize) {
-#if USE_INFERENCE_LOAD_CONTROL
-            //check server for dynamic parameters
-            InfComCommand inference_info = {
-                INFCOM_MAGIC, INFCOM_CMD_INFERENCE_LOAD_CONTROL
-                { args->getNumCpus(), 0, args->getNumGPUs(), 0 },
-                { 0 }
-            };
-            ERRCHK(sendCommand(sock, inference_info, clientName));
-            ERRCHK(recvCommand(sock, inference_info, clientName, INFCOM_CMD_INFERENCE_LOAD_CONTROL));
-            // get number of threads requested by client for each gpu
-            numThreadsReq = inference_info.data[0];
-            numGpusReq = inference_info.data[2];
-            gpuMask = inference_info.data[3];
-            if (numThreadsReq != numThreadsReq){
-                args->lock();
-                args->setDecThreads(numThreadsReq);
-                args->unlock();
-            }
-#endif
             inputCountInBatch = 0;
             gpu = (gpu + 1) % GPUs;
-            for(int i = 0; i < GPUs && ((1<<i)&gpuMask); i++) {
+            for(int i = 0; i < GPUs /*&& ((1<<i)&gpuMask)*/; i++) {
                 if(i != gpu && queueDeviceTagQ[i]->size() < queueDeviceTagQ[gpu]->size()) {
                     gpu = i;
                 }

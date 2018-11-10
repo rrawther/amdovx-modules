@@ -223,6 +223,15 @@ void inference_receiver::run()
                     }
                 }
             }
+            else if(cmd.command == INFCOM_CMD_INFERENCE_LOAD_CONTROL) {
+                int numCpuThreads = 4; // todo get it from slider
+                InfComCommand retcmd = {
+                    INFCOM_MAGIC, INFCOM_CMD_INFERENCE_LOAD_CONTROL,
+                    { numCpuThreads, -1, GPUs, -1 },
+                    { 0 }
+                };
+                connection->sendCmd(retcmd);
+            }
             else {
                 progress->errorCode = -1;
                 progress->message.sprintf("ERROR: got invalid command 0x%08x", cmd.command);

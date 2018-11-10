@@ -53,6 +53,8 @@
 //    client: InfComCommand:INFCOM_CMD_TOPK_INFERENCE_RESULT data={imageCount,top_k,<tag0>,<label0:prob0>,..<labelk:probk>,<tag1><label0:prob0>..<labelk:probk>, ...} upto imageCount where ((imageCount*topk)+2) <= 14
 //  * server: (repeat of INFCOM_CMD_SEND_IMAGES and INFCOM_CMD_INFERENCE_RESULT messages)
 //    client: (repeat of INFCOM_CMD_SEND_IMAGES and INFCOM_CMD_INFERENCE_RESULT messages)
+//  * server: InfComCommand:INFCOM_CMD_INFERENCE_LOAD_CONTROL with data={max_cpu_threads, max_gpu_threads}
+//    client: InfComCommand:INFCOM_CMD_INFERENCE_LOAD_CONTROL with data={cpu_thread_count_per_gpu,CPU_MASK, GPUs,GPU_MASK)
 //  * server: InfComCommand:INFCOM_CMD_DONE
 //    client: InfComCommand:INFCOM_CMD_DONE
 //    client: (disconnect)
@@ -72,6 +74,8 @@
 #define INFCOM_CMD_SEND_IMAGES                 302
 #define INFCOM_CMD_INFERENCE_RESULT            303
 #define INFCOM_CMD_TOPK_INFERENCE_RESULT       304
+#define INFCOM_CMD_BB_INFERENCE_RESULT         305
+#define INFCOM_CMD_INFERENCE_LOAD_CONTROL      306
 
 // InfComCommand.data[0] for INFCOM_CMD_SEND_MODE
 #define INFCOM_MODE_CONFIGURE                  1

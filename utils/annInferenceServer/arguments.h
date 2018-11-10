@@ -30,6 +30,9 @@ public:
     int getNumGPUs() {
         return numGPUs;
     }
+    int getNumCPUs() {
+        return numCpuCores;
+    }
     const std::string& getConfigurationDir() {
         return configurationDir;
     }
