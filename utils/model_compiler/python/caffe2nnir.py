@@ -163,17 +163,30 @@ def extractInput(net_parameter, graph, input_dims):
     return inputList
 
 # extraction of output from caffe network to ir output.
-def extractOutput(graph, inputOutputLayers, verbose):
+def extractOutput(graph, inputOutputLayers, output_list, verbose):
     outputList = {}
-    last_layer_index = len(inputOutputLayers) - 1
-    last_layer_info = inputOutputLayers[last_layer_index]
-    output_map = last_layer_info["outputs"]
-    output_name = output_map.keys()[0]
-    if (verbose):
-        print ("output name is : " + output_name)
-    output_dims = output_map[output_name]
-    graph.addOutput(caffe_blob_to_ir_tensor(output_name, "F032", output_dims))
-    outputList[output_name] = output_dims
+    if (len(output_list) == 1):
+        last_layer_index = len(inputOutputLayers) - 1
+        last_layer_info = inputOutputLayers[last_layer_index]
+        output_map = last_layer_info["outputs"]
+        output_name = output_map.keys()[0]
+        if (verbose):
+            print ("output name is : " + output_name)
+        output_dims = output_map[output_name]
+        graph.addOutput(caffe_blob_to_ir_tensor(output_name, "F032", output_dims))
+        outputList[output_name] = output_dims
+    else:
+        for i in range(len(output_list)):
+            if (verbose):
+                print ("output name at index: "+ str(i) + " " + output_name)
+            output_name = output_list[i]
+            for j in range(len(inputOutputLayers)):
+                if (output_name in inputOutputLayers[j]["layer_name"]):
+                    output_map = inputOutputLayers[j]["outputs"]
+                    output_dims = output_map[output_name]
+                    graph.addOutput(caffe_blob_to_ir_tensor(output_name, "F032", output_dims))
+                    outputList[output_name] = output_dims
+                    break
     return outputList
 
 
@@ -385,6 +398,7 @@ def extractCaffeNodeInfo(net_parameter, graph, inputsInfo, verbose):
     inputsMap = {}
     outputsMap = {}
     count = 0
+    _output_name = {}
 
     layers = net_parameter.layer
 
@@ -398,6 +412,16 @@ def extractCaffeNodeInfo(net_parameter, graph, inputsInfo, verbose):
         # ignoring the input/data layer as input is already obtained in previous step.
         if (layer_type == "Data" or layer_type == "ImageData" or layer_type == "Input"):
             continue
+        for k in range(len(layer_param.bottom)):
+            if layer_param.bottom[k] in _output_name:
+                _output_name[layer_param.bottom[k]]['count'] = _output_name[layer_param.bottom[k]]['count']+1
+            else:
+                _output_name[layer_param.bottom[k]] = {'count':0}
+        for k in range(len(layer_param.top)):
+            if layer_param.top[k] in _output_name:
+                _output_name[layer_param.top[k]]['count'] = _output_name[layer_param.top[k]]['count']+1
+            else:
+                _output_name[layer_param.top[k]] = {'count':0, 'name':layer_name}
 
         # dropout layer is copy layer in inference, hence aliasing the input for dropout layer for next layer.
         if (layer_type == "Dropout"):
@@ -438,9 +462,9 @@ def extractCaffeNodeInfo(net_parameter, graph, inputsInfo, verbose):
                     prev_layer_info = inputOutputMap[j]
                     prev_layer_type = prev_layer_info["layer_type"]
                     prev_output_map = prev_layer_info["outputs"]
-                    #if layer_name == "Scale195":
-                     #   print("prev_type " + str(prev_layer_type) + " " + str(in_name) + " " + str(prev_output_map))
-                    if (prev_layer_type == "batch_norm" and in_name in prev_output_map):
+                    if (verbose):
+                        print("prev_type " + str(prev_layer_type) + " " + str(in_name) + " " + str(prev_output_map))
+                    if (prev_layer_type == "batch_norm" and ((in_name in prev_output_map) or (in_name in outputNameAliasMap))):
                         modified_out_info_map = {}
                         scale_weights_map = {}
                         scale_bias_map = {}
@@ -584,16 +608,20 @@ def extractCaffeNodeInfo(net_parameter, graph, inputsInfo, verbose):
             print (layer_info_map)
         node = caffe_node_to_ir_node(layer_info_map["layer_type"], layer_info_map)
         graph.addNode(node)
+    output_name = []
+    for i in _output_name:
+        if 'name' in _output_name[i] and _output_name[i]['count'] == 0:
+            output_name.append(_output_name[i]['name']) 
 
-    return inputOutputMap
+    return inputOutputMap, output_name
 
 
 # convert caffe graph to ir graph.
 def caffe_graph_to_ir_graph(net_parameter, input_dims, verbose):
     graph = IrGraph()
     inputMap = extractInput(net_parameter, graph, input_dims)
-    inputOutputMap = extractCaffeNodeInfo(net_parameter, graph, inputMap, verbose)
-    outputList = extractOutput(graph, inputOutputMap, verbose)
+    inputOutputMap, output_name = extractCaffeNodeInfo(net_parameter, graph, inputMap, verbose)
+    outputList = extractOutput(graph, inputOutputMap, output_name, verbose)
     graph.updateLocals()
     return graph
 
