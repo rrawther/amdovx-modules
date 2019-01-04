@@ -629,13 +629,13 @@ def generatePythonH(graph, fileName):
 #include <VX/vx.h>
 
 ////
-// python interface handle
+// python interface handle: upto 8 outputs
 //
 typedef struct pyif_ann_handle_t {
     vx_context  context;
     vx_graph    graph;
     vx_tensor   input;
-    vx_tensor   *output;
+    vx_tensor   output[8];
     int         num_output;
 } * pyif_ann_handle;
 
