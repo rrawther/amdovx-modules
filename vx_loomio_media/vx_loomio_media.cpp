@@ -34,6 +34,7 @@ SHARED_PUBLIC vx_status VX_API_CALL vxPublishKernels(vx_context context)
 	// register kernels
 	ERROR_CHECK_STATUS(loomio_media_decode_publish(context));
 	ERROR_CHECK_STATUS(loomio_media_encode_publish(context));
+    printf("published loomio kernels\n");
 	return VX_SUCCESS;
 }
 

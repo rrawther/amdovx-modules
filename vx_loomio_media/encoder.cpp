@@ -279,7 +279,7 @@ vx_status CLoomIoMediaEncoder::Initialize()
 		ERROR_CHECK_NULLPTR(videoStream = avformat_new_stream(formatContext, videoCodec));
 		videoStream->id = formatContext->nb_streams - 1;
 		if (formatContext->oformat->flags & AVFMT_GLOBALHEADER)
-			videoCodecContext->flags |= CODEC_FLAG_GLOBAL_HEADER;
+            videoCodecContext->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
 		av_dump_format(formatContext, 0, fileName, 1);
 		if (!(formatContext->oformat->flags & AVFMT_NOFILE)) {
 			if ((status = avio_open(&formatContext->pb, fileName, AVIO_FLAG_WRITE)) < 0) {

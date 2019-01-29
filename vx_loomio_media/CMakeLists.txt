@@ -43,6 +43,7 @@ include_directories(
     ${OpenCL_INCLUDE_DIRS} ${OpenCL_INCLUDE_DIRS}/Headers
     ${AVUTIL_INCLUDE_DIR} ${AVCODEC_INCLUDE_DIR} ${SWSCALE_INCLUDE_DIR} ${AVFORMAT_INCLUDE_DIR}
     ../deps/amdovx-core/openvx/include
+    include
     )
 
 list(APPEND SOURCES
@@ -53,7 +54,9 @@ list(APPEND SOURCES
 
 add_library(${PROJECT_NAME} SHARED ${SOURCES})
 target_link_libraries(${PROJECT_NAME} ${OpenCL_LIBRARIES} ${AVUTIL_LIBRARY} ${AVCODEC_LIBRARY} ${SWSCALE_LIBRARY} ${AVFORMAT_LIBRARY} openvx)
+
 install (TARGETS ${PROJECT_NAME} DESTINATION lib)
+install (FILES include/vx_loomio_media.h DESTINATION include)
 
 if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
 	set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MT")
